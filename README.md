@@ -8,7 +8,7 @@ An independent, offline-first Android app (and browser app) for dump-truck owner
   - **Trucks**: plate, make/model, capacity, usual driver, and reminders 30 days before insurance, inspection and service dates; mark a truck "not in use" without losing its history
   - **Trips**: log every haul with truck, driver, customer, from/to, material, quantity × rate (per trip, load, m³, tonne, day or hour), and a ticket or delivery-note number; filter by truck, customer or invoiced/not invoiced; print or export to CSV
   - **Fuel, repairs and bills**: add fuel (with litres and odometer), repairs/service, spare parts, tyres, insurance and other costs to a truck; paid now (posts a cash-out entry in a linked book) or on credit (a supplier bill with part payments and a "who you owe" list)
-  - **Customers and invoices**: an invoice takes a customer's trips that are not invoiced yet, adds VAT, shows withholding tax, tracks Draft → Sent → Paid, records payments received (into a linked book), prints on A4 and exports to Excel with live formulas; per-customer balances and statements
+  - **Customers and invoices**: an invoice takes a customer's trips that are not invoiced yet, tracks Draft → Sent → Paid, records payments received (into a linked book), prints on A4 and exports to Excel with live formulas; per-customer balances and statements
   - **Drivers and helpers**: daily rates, attendance by day, weekly wages that post to your costs, and a driver statement
   - **Profit per truck**: income, costs, litres of fuel and profit for every truck, plus fleet income, costs, profit and margin on the Overview; costs not tagged to a truck are shown separately
   - **Linked cash books**: link one or more cash books to a fleet so real cash and fleet costs agree
@@ -24,7 +24,6 @@ An independent, offline-first Android app (and browser app) for dump-truck owner
 - **Dark mode** (follows the system, or choose light/dark)
 - **PIN lock** (4–8 digits; locks again when you leave the app)
 > The Afaan Oromoo and Amharic text should be checked by a native speaker (`web/i18n.js`, `web/i18n-projects.js`, `web/i18n-more.js`, `web/i18n-fleet.js`).
-> New fleets start with VAT 0% and withholding tax 0%. Set them to what applies to your invoices.
 > The PIN is a simple lock for casual privacy, not strong encryption.
 
 ## New in 2.0
@@ -34,7 +33,7 @@ An independent, offline-first Android app (and browser app) for dump-truck owner
 - **Businesses**: group books under several businesses, each with its own staff list and roles (manager, accountant, cashier, viewer)
 - **Reminders** for supplier bills (with an optional due date), unpaid or late customer invoices, drivers' unpaid wages, and truck insurance / inspection / service dates
 - **Report export** (Excel) for any date range
-- **Excel exports**: the customer invoice has live formulas (trip lines, VAT, withholding, balance)
+- **Excel exports**: the customer invoice has live formulas (trip lines, received, balance)
 - Staff roles inside a business are a directory. Access to a book is still controlled by sharing that book (edit or view).
 
 ## The Entries tab (2.2)

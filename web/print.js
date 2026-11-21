@@ -86,9 +86,7 @@
 
     h += '<table>';
     h += row(t('work_amount'), m(k.gross));
-    if (p.vat > 0) h += row('+ ' + t('vat_amt') + ' (' + p.vat + '%)', m(k.vat));
     h += row(t('inv_total'), m(k.total), 'head');
-    if (k.taxSettled > 0) h += row('− ' + t('wht_amt') + ' (' + p.wht + '%)', m(k.taxSettled));
     if (k.received > 0) h += row('− ' + t('received'), m(k.received));
     h += row(t('balance_due'), m(k.balance), 'total');
     h += '</table>';

@@ -285,8 +285,8 @@
       name: str(p.name, 60) || ('Fleet ' + n),
       owner: str(p.owner, 60),
       location: str(p.location, 60),
-      vat: num(p.vat, 0, 100),
-      wht: num(p.wht, 0, 100),
+      vat: 0,
+      wht: 0, // tax is not part of TruckBook invoices; kept at 0 so old data stays valid
       payDays: p.payDays == null || p.payDays === '' ? INVOICE_PAY_DAYS : Math.round(num(p.payDays, 1, 365)),
       trucks: trucks,
       trips: trips,
@@ -782,8 +782,7 @@
   function tripsOfInvoice(project, invoiceId) {
     return project.trips.filter(function (x) { return x.invoiceId === invoiceId; });
   }
-  /* Invoice arithmetic:  total = work + VAT;  the customer may withhold tax (% of the work) and gives a receipt for it.
-     balance = total - withholding (once its receipt is entered) - money received. */
+  /* Invoice arithmetic:  total = trips amount;  balance = total - money received. (No VAT / withholding.) */
   function invoiceCalc(project, inv) {
     var gross = sum(tripsOfInvoice(project, inv.id), function (x) { return x.amount; });
     var vat = round2(gross * project.vat / 100);

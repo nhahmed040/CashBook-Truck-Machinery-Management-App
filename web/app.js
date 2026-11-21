@@ -1225,16 +1225,11 @@
       { key: 'name', label: t('proj_name'), type: 'text', value: p.name, required: true },
       { key: 'owner', label: t('owner_name'), type: 'text', value: p.owner },
       { key: 'location', label: t('location'), type: 'text', value: p.location },
-      { key: 'vat', label: t('vat_pct'), type: 'number', min: 0, max: 100, value: p.vat },
-      { key: 'wht', label: t('wht_pct'), type: 'number', min: 0, max: 100, value: p.wht },
-      { key: 'payDays', label: t('pay_days'), type: 'number', min: 1, max: 365, value: p.payDays, noCalc: true },
-      { type: 'note', text: t('fleet_tax_note') }
+      { key: 'payDays', label: t('pay_days'), type: 'number', min: 1, max: 365, value: p.payDays, noCalc: true }
     ];
   }
   function applyProjectValues(p, v) {
     p.name = v.name.slice(0, 60); p.owner = v.owner.slice(0, 60); p.location = v.location.slice(0, 60);
-    p.vat = Math.min(100, Math.max(0, L.round2(v.vat)));
-    p.wht = Math.min(100, Math.max(0, L.round2(v.wht)));
     p.payDays = Math.min(365, Math.max(1, Math.round(v.payDays) || 30));
   }
   function editProject(p) {
@@ -1246,7 +1241,6 @@
     });
   }
   function newProject() {
-    // VAT and withholding start at 0: set them to what applies to your business and customers.
     var p = L.sanitizeProject({ name: '', vat: 0, wht: 0, payDays: 30 }, state.projects.length + 1);
     p.name = '';
     openForm({
@@ -1519,15 +1513,8 @@
       if (stKey !== 'paid') stRow.appendChild(btn(stKey === 'sent' ? t('back_to_draft') : t('mark_sent'), '', function () { toggleSent(inv, stKey); }));
       card.appendChild(stRow);
       card.appendChild(kv(t('work_amount') + ' (' + c.trips + ' ' + t('trips_short') + ')', money(c.gross)));
-      if (p.vat > 0) card.appendChild(kv('+ ' + t('vat_amt') + ' (' + pct(p.vat) + ')', money(c.vat)));
       card.appendChild(kv(t('inv_total'), money(c.total), 'total'));
-      if (p.wht > 0) {
-        card.appendChild(kv('− ' + t('wht_amt') + ' (' + pct(p.wht) + ')', money(c.wht)));
-        card.appendChild(kv(t('cash_due'), money(c.cashDue)));
-        card.appendChild(kv(t('wht_receipt'), inv.whtReceipt || t('receipt_missing'), inv.whtReceipt || !(c.wht > 0) ? '' : 'neg'));
-      }
       card.appendChild(kv(t('cash_received'), money(c.received)));
-      if (c.taxSettled > 0) card.appendChild(kv(t('tax_settled'), money(c.taxSettled)));
       card.appendChild(kv(t('balance_due'), money(c.balance), c.balance > 0 ? 'pos' : ''));
       inv.receipts.forEach(function (rc) {
         var r = el('div', 'pay');
@@ -1546,7 +1533,6 @@
       row.appendChild(btn(t('export_invoice_xlsx'), '', function () {
         saveWorkbook('Invoice-' + safeName(p.name) + '-' + safeName(inv.no || inv.date), window.CBExcel.invoiceWorkbook(p, inv.id));
       }));
-      if (p.wht > 0) row.appendChild(btn(t('tax_receipts'), '', function () { editTaxReceipt(inv); }));
       row.appendChild(btn(t('edit_invoice'), '', function () { editInvoice(p, inv); }));
       card.appendChild(row);
       body.appendChild(card);
@@ -1617,14 +1603,6 @@
         save(); renderAll(); undoToast();
         return true;
       }
-    });
-  }
-
-  function editTaxReceipt(inv) {
-    openForm({
-      title: t('tax_receipts'),
-      fields: [{ key: 'whtReceipt', label: t('wht_receipt'), type: 'text', value: inv.whtReceipt, max: 30 }],
-      onSubmit: function (v) { inv.whtReceipt = v.whtReceipt.slice(0, 30); save(); renderAll(); return null; }
     });
   }
 

@@ -1,4 +1,4 @@
-/* Excel (.xlsx) exports: a customer invoice (its trips, VAT, withholding, receipts and balance) and a trips sheet,
+/* Excel (.xlsx) exports: a customer invoice (its trips, receipts and balance) and a trips sheet,
    both with live formulas that carry cached values. Also a date-range cash report workbook.
    Pure functions: no DOM access. */
 (function (root, factory) {
@@ -50,7 +50,7 @@
     return L.sanitizeProject(JSON.parse(JSON.stringify(p)), 1);
   }
 
-  /* One customer invoice: its trips, VAT, withholding, receipts and the balance, with live formulas. */
+  /* One customer invoice: its trips, receipts and the balance, with live formulas. */
   function invoiceWorkbook(project, invoiceId) {
     var p = prep(project), inv = null;
     p.invoices.forEach(function (c) { if (c.id === invoiceId) inv = c; });
@@ -69,13 +69,11 @@
     var first = tr.first, last = Math.max(tr.last, tr.first);
     function lab(text, bold) { return { v: text, s: { b: !!bold, h: 'right' } }; }
     function blanks(n) { var a = []; for (var i = 0; i < n; i++) a.push({}); return a; }
-    var r0 = rows.length + 1, work = r0, vat = r0 + 1, total = r0 + 2, wht = r0 + 3, rec = r0 + 4, bal = r0 + 5;
+    var r0 = rows.length + 1, work = r0, total = r0 + 1, rec = r0 + 2, bal = r0 + 3;
     rows.push(blanks(10).concat([lab('Work amount'), { f: 'SUM(L' + first + ':L' + last + ')', v: k.gross, s: NUM }]));
-    rows.push(blanks(10).concat([lab('VAT ' + p.vat + '%'), { f: 'L' + work + '*' + p.vat + '/100', v: k.vat, s: NUM }]));
-    rows.push(blanks(10).concat([lab('Total', true), { f: 'L' + work + '+L' + vat, v: k.total, s: BOLD_NUM }]));
-    rows.push(blanks(10).concat([lab('Withholding tax ' + p.wht + '%' + (inv.whtReceipt ? '' : ' (no receipt yet)')), { v: k.taxSettled, s: NUM }]));
+    rows.push(blanks(10).concat([lab('Total', true), { f: 'L' + work, v: k.total, s: BOLD_NUM }]));
     rows.push(blanks(10).concat([lab('Received'), { v: k.received, s: NUM }]));
-    rows.push(blanks(10).concat([lab('Balance due', true), { f: 'L' + total + '-L' + wht + '-L' + rec, v: k.balance, s: BOLD_NUM }]));
+    rows.push(blanks(10).concat([lab('Balance due', true), { f: 'L' + total + '-L' + rec, v: k.balance, s: BOLD_NUM }]));
     return { sheets: [{ name: 'Invoice', cols: TRIP_COLS, rows: rows, landscape: true }] };
   }
 
