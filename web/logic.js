@@ -147,7 +147,8 @@
       date: isDate(p.date) ? p.date : todayStr(),
       amount: round2(a),
       entryId: validId(p.entryId) ? p.entryId : 0,
-      bookId: str(p.bookId, 40)
+      bookId: str(p.bookId, 40),
+      driver: validId(p.driver) ? p.driver : 0 // customer money collected by this driver (the driver holds it until handed over)
     };
   }
 
@@ -266,8 +267,8 @@
      advance = trip money given to a driver, spent = what the driver spent from it (a truck cost), return = change given back,
      salary = wage earned (adds to what is owed to the driver), pay = wage paid, deduct = fine or loan taken off,
      in / out = any other cash in or out of a truck. */
-  var CASH_KINDS = ['advance', 'spent', 'return', 'salary', 'pay', 'deduct', 'in', 'out'];
-  var CASH_MOVES = { advance: 'out', return: 'in', pay: 'out', 'in': 'in', out: 'out' }; // kinds that move money in/out of the cash box
+  var CASH_KINDS = ['advance', 'spent', 'return', 'handover', 'salary', 'pay', 'deduct', 'in', 'out'];
+  var CASH_MOVES = { advance: 'out', return: 'in', handover: 'in', pay: 'out', 'in': 'in', out: 'out' }; // kinds that move money in/out of the cash box
   function sanitizeCash(c) {
     if (!c || typeof c !== 'object' || CASH_KINDS.indexOf(c.kind) < 0) return null;
     var a = Number(c.amount);
@@ -852,16 +853,16 @@
      Each cost can be tagged with a truck (bill.truck / entry.truck). */
   function costItems(state, p) {
     var items = [];
-    p.bills.forEach(function (b) { items.push({ code: b.code, truck: b.truck, amount: b.amount, litres: b.litres }); });
+    p.bills.forEach(function (b) { items.push({ code: b.code, truck: b.truck, amount: b.amount, litres: b.litres, date: b.date }); });
     projectBooks(state, p.id).forEach(function (b) {
       b.entries.forEach(function (e) {
         if (e.type !== 'out' || e.billId || e.moveId) return;
-        items.push({ code: e.code || 'other', truck: e.truck, amount: e.amount, litres: 0 });
+        items.push({ code: e.code || 'other', truck: e.truck, amount: e.amount, litres: 0, date: e.date });
       });
     });
     // driver spending, wages paid and other cash out of a truck (advances are not a cost until the driver spends them)
     (p.cash || []).forEach(function (c) {
-      if (c.kind === 'spent' || c.kind === 'pay' || c.kind === 'out') items.push({ code: c.code || 'other', truck: c.truck, amount: c.amount, litres: 0 });
+      if (c.kind === 'spent' || c.kind === 'pay' || c.kind === 'out') items.push({ code: c.code || 'other', truck: c.truck, amount: c.amount, litres: 0, date: c.date });
     });
     return items;
   }
@@ -870,19 +871,22 @@
   /* A driver's cash account. held = trip money with the driver; owed = wages the owner owes (salary + unpaid attendance - paid - deductions).
      net > 0: the owner owes the driver;  net < 0: the driver owes the owner. */
   function driverAccount(p, workerId) {
-    var a = { advance: 0, spent: 0, returned: 0, salary: 0, pay: 0, deduct: 0, attendance: 0, entries: [] };
+    var a = { advance: 0, spent: 0, returned: 0, handed: 0, collected: 0, salary: 0, pay: 0, deduct: 0, attendance: 0, entries: [] };
     (p.cash || []).forEach(function (c) {
       if (c.driver !== workerId) return;
       a.entries.push(c);
       if (c.kind === 'advance') a.advance += c.amount;
       else if (c.kind === 'spent') a.spent += c.amount;
       else if (c.kind === 'return') a.returned += c.amount;
+      else if (c.kind === 'handover') a.handed += c.amount;
       else if (c.kind === 'salary') a.salary += c.amount;
       else if (c.kind === 'pay') a.pay += c.amount;
       else if (c.kind === 'deduct') a.deduct += c.amount;
     });
+    p.invoices.forEach(function (inv) { inv.receipts.forEach(function (r) { if (r.driver === workerId) a.collected += r.amount; }); });
+    a.collected = round2(a.collected);
     a.attendance = sum(p.attendance.filter(function (x) { return x.workerId === workerId && !x.paid; }), function (x) { return x.days * x.rate; });
-    a.held = round2(a.advance - a.spent - a.returned);
+    a.held = round2(a.advance + a.collected - a.spent - a.returned - a.handed);
     a.owed = round2(a.salary + a.attendance - a.pay - a.deduct);
     a.net = round2(a.owed - a.held);
     a.entries.sort(function (x, y) { return x.date < y.date ? 1 : x.date > y.date ? -1 : y.id - x.id; });
@@ -900,6 +904,7 @@
     p.invoices.forEach(function (inv) {
       var trips = tripsOfInvoice(p, inv.id), tot = sum(trips, function (x) { return x.amount; });
       inv.receipts.forEach(function (r) {
+        if (r.driver) return; // collected by a driver: it is cash in the box only when handed over
         if (!trips.length || !(tot > 0)) { add(r.date, 'in', r.amount, 0, 0, (inv.customer || '') + ' ' + (inv.no || ''), 'receipt'); return; }
         var byTruck = {}, order = [], used = 0;
         trips.forEach(function (x) { if (!(x.truck in byTruck)) { byTruck[x.truck] = 0; order.push(x.truck); } byTruck[x.truck] += x.amount; });
@@ -954,6 +959,126 @@
       rows.push([l.date, l.dir, l.amount.toFixed(2), truckName(p, l.truck), (p.workers.filter(function (w) { return w.id === l.driver; })[0] || {}).name || '', l.kind, l.label]);
     });
     return '﻿' + rows.map(function (r) { return r.map(function (v) { return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; }).join(','); }).join('\r\n');
+  }
+
+
+  /* ---------- financial statements ---------- */
+  function dayDiff(a, b) { // whole days from a to b (YYYY-MM-DD)
+    var x = a.split('-'), y = b.split('-');
+    return Math.round((Date.UTC(+y[0], +y[1] - 1, +y[2]) - Date.UTC(+x[0], +x[1] - 1, +x[2])) / 86400000);
+  }
+  function inRange(d, from, to) { return (!from || d >= from) && (!to || d <= to); }
+  /* what the owner owes one driver in wages at a date: salary earned + unpaid work days - wages paid - deductions (never below 0) */
+  function wagesOwedAt(p, workerId, asOf) {
+    var o = 0;
+    (p.cash || []).forEach(function (c) {
+      if (c.driver !== workerId || c.date > asOf) return;
+      if (c.kind === 'salary') o += c.amount; else if (c.kind === 'pay' || c.kind === 'deduct') o -= c.amount;
+    });
+    p.attendance.forEach(function (x) { if (x.workerId === workerId && !x.paid && x.date <= asOf) o += x.days * x.rate; });
+    return Math.max(0, round2(o));
+  }
+  function allWagesOwedAt(p, asOf) { return round2(sum(p.workers, function (w) { return wagesOwedAt(p, w.id, asOf); })); }
+  /* Profit and loss for a period: trips by trip date, costs by bill / payment date. */
+  function incomeStatement(state, p, from, to) {
+    var trips = p.trips.filter(function (x) { return inRange(x.date, from, to); });
+    var items = costItems(state, p).filter(function (c) { return inRange(c.date, from, to); });
+    var byCode = {}, byTruck = {}, revenue = 0, cost = 0;
+    function tr(id) { id = p.trucks.some(function (x) { return x.id === id; }) ? id : 0; return byTruck[id] || (byTruck[id] = { truck: id, trips: 0, revenue: 0, cost: 0, profit: 0 }); }
+    trips.forEach(function (x) { revenue += x.amount; var r = tr(x.truck); r.revenue += x.amount; r.trips++; });
+    items.forEach(function (c) { cost += c.amount; byCode[c.code] = (byCode[c.code] || 0) + c.amount; tr(c.truck).cost += c.amount; });
+    var rows;
+    // wages earned in the period but not yet paid (wages that are paid already count as costs above)
+    var accrual = round2(allWagesOwedAt(p, to || '9999-12-31') - (from ? allWagesOwedAt(p, addDaysStr(from, -1)) : 0));
+    if (accrual) { cost += accrual; byCode.wages_accrued = accrual; tr(0).cost += accrual; }
+    rows = Object.keys(byTruck).map(function (k) { var r = byTruck[k]; r.revenue = round2(r.revenue); r.cost = round2(r.cost); r.profit = round2(r.revenue - r.cost); return r; })
+      .sort(function (a, b) { return (a.truck === 0) - (b.truck === 0) || b.profit - a.profit; });
+    revenue = round2(revenue); cost = round2(cost);
+    return { from: from, to: to, trips: trips.length, revenue: revenue, byCode: Object.keys(byCode).map(function (k) { return { code: k, amount: round2(byCode[k]) }; }).sort(function (a, b) { return b.amount - a.amount; }),
+      cost: cost, profit: round2(revenue - cost), margin: revenue > 0 ? round2((revenue - cost) / revenue * 100) : 0, byTruck: rows };
+  }
+  /* Cash flow: money that moved in or out of the owner's cash box (driver-collected money counts when handed over). */
+  function cashFlowStatement(state, p, from, to) {
+    var all = cashLines(state, p), opening = 0, ins = {}, outs = {}, collected = 0;
+    all.forEach(function (l) { if (from && l.date < from) opening += l.dir === 'in' ? l.amount : -l.amount; });
+    all.forEach(function (l) {
+      if (!inRange(l.date, from, to)) return;
+      var key = l.kind === 'book' ? (l.dir === 'in' ? 'in' : 'out') : l.kind;
+      var tgt = l.dir === 'in' ? ins : outs;
+      tgt[key] = (tgt[key] || 0) + l.amount;
+    });
+    p.invoices.forEach(function (inv) { inv.receipts.forEach(function (r) { if (r.driver && inRange(r.date, from, to)) collected += r.amount; }); });
+    function list(m, order) { return order.filter(function (k) { return m[k] > 0; }).map(function (k) { return { kind: k, amount: round2(m[k]) }; }); }
+    var inRows = list(ins, ['receipt', 'handover', 'return', 'in']), outRows = list(outs, ['bill', 'advance', 'pay', 'out']);
+    var tin = round2(sum(inRows, function (r) { return r.amount; })), tout = round2(sum(outRows, function (r) { return r.amount; }));
+    opening = round2(opening);
+    return { from: from, to: to, opening: opening, inRows: inRows, outRows: outRows, totalIn: tin, totalOut: tout, net: round2(tin - tout), closing: round2(opening + tin - tout),
+      collectedByDrivers: round2(collected), booksBalance: cashOnHand(state, p, to) };
+  }
+  /* Balance sheet at a date. Equity = assets - liabilities (no opening capital is recorded). */
+  function balanceSheet(state, p, asOf) {
+    var cash = 0;
+    cashLines(state, p).forEach(function (l) { if (l.date <= asOf) cash += l.dir === 'in' ? l.amount : -l.amount; });
+    var held = 0, reimburse = 0, wagesOwed = 0, drivers = [];
+    p.workers.forEach(function (w) {
+      var h = 0;
+      (p.cash || []).forEach(function (c) {
+        if (c.driver !== w.id || c.date > asOf) return;
+        if (c.kind === 'advance') h += c.amount;
+        else if (c.kind === 'return' || c.kind === 'spent' || c.kind === 'handover') h -= c.amount;
+      });
+      p.invoices.forEach(function (inv) { inv.receipts.forEach(function (r) { if (r.driver === w.id && r.date <= asOf) h += r.amount; }); });
+      h = round2(h);
+      var owed = wagesOwedAt(p, w.id, asOf);
+      if (h > 0) held += h; else reimburse -= h;
+      wagesOwed += owed;
+      if (h || owed) drivers.push({ id: w.id, name: w.name, held: h, owed: owed });
+    });
+    var receivables = 0, unbilled = 0, payables = 0, invDate = {};
+    p.invoices.forEach(function (inv) {
+      invDate[inv.id] = inv.date;
+      if (inv.date > asOf) return;
+      var gross = sum(tripsOfInvoice(p, inv.id), function (x) { return x.amount; });
+      var got = sum(inv.receipts.filter(function (r) { return r.date <= asOf; }), function (r) { return r.amount; });
+      receivables += Math.max(0, gross - got);
+    });
+    p.trips.forEach(function (x) { if (x.date <= asOf && (!x.invoiceId || !invDate[x.invoiceId] || invDate[x.invoiceId] > asOf)) unbilled += x.amount; });
+    p.bills.forEach(function (b) {
+      if (b.date > asOf) return;
+      var paid = sum(b.payments.filter(function (x) { return x.date <= asOf; }), function (x) { return x.amount; });
+      payables += Math.max(0, b.amount - paid);
+    });
+    var A = [['cash', cash], ['held', held], ['receivables', receivables], ['unbilled', unbilled]].map(function (x) { return { key: x[0], amount: round2(x[1]) }; });
+    var Lb = [['payables', payables], ['wagesOwed', wagesOwed], ['reimburse', reimburse]].map(function (x) { return { key: x[0], amount: round2(x[1]) }; });
+    var ta = round2(sum(A, function (x) { return x.amount; })), tl = round2(sum(Lb, function (x) { return x.amount; }));
+    return { asOf: asOf, assets: A, liabilities: Lb, totalAssets: ta, totalLiabilities: tl, equity: round2(ta - tl), drivers: drivers };
+  }
+  /* Ageing of what customers owe you and what you owe suppliers, by days past the due date. */
+  var AGE_BUCKETS = ['notdue', 'd30', 'd60', 'd90', 'd90p'];
+  function ageBucket(days) { return days <= 0 ? 0 : days <= 30 ? 1 : days <= 60 ? 2 : days <= 90 ? 3 : 4; }
+  function agingReport(p, asOf) {
+    function build(items) {
+      var map = {}, order = [], tot = [0, 0, 0, 0, 0];
+      items.forEach(function (it) {
+        if (!(it.amount > 0.004)) return;
+        var k = it.name || '—';
+        if (!map[k]) { map[k] = { name: k, b: [0, 0, 0, 0, 0], total: 0 }; order.push(k); }
+        var i = ageBucket(dayDiff(it.due, asOf));
+        map[k].b[i] += it.amount; map[k].total += it.amount; tot[i] += it.amount;
+      });
+      var rows = order.map(function (k) { var r = map[k]; r.b = r.b.map(round2); r.total = round2(r.total); return r; }).sort(function (a, b) { return b.total - a.total; });
+      return { rows: rows, totals: tot.map(round2), total: round2(sum(tot, function (x) { return x; })) };
+    }
+    var rec = [], pay = [];
+    p.invoices.forEach(function (inv) {
+      var bal = invoiceCalc(p, inv).balance;
+      rec.push({ name: inv.customer, amount: bal, due: inv.due || addDaysStr(inv.date, p.payDays || 30) });
+    });
+    p.bills.forEach(function (b) {
+      var left = round2(b.amount - sum(b.payments, function (x) { return x.amount; }));
+      pay.push({ name: b.supplier, amount: left, due: b.due || b.date });
+    });
+    return { asOf: asOf, receivables: build(rec), payables: build(pay) };
   }
 
   function projectSummary(state, projectId) {
@@ -1318,6 +1443,7 @@
     sanitizeEntry: sanitizeEntry, sanitizeState: sanitizeState, defaultState: defaultState, migrateOld: migrateOld,
     sanitizeProject: sanitizeProject, sanitizeBill: sanitizeBill, sanitizeInvoice: sanitizeInvoice, sanitizeTruck: sanitizeTruck, sanitizeTrip: sanitizeTrip,
     sanitizeWorker: sanitizeWorker, sanitizeAttendance: sanitizeAttendance, sanitizePayment: sanitizePayment,
+    incomeStatement: incomeStatement, cashFlowStatement: cashFlowStatement, balanceSheet: balanceSheet, agingReport: agingReport, AGE_BUCKETS: AGE_BUCKETS, dayDiff: dayDiff,
     sanitizeCash: sanitizeCash, CASH_KINDS: CASH_KINDS, CASH_MOVES: CASH_MOVES, driverAccount: driverAccount, cashLines: cashLines, truckCash: truckCash, cashOnHand: cashOnHand, cashCsv: cashCsv,
     hashPin: hashPin, newSalt: newSalt, validPin: validPin,
     buildCsv: buildCsv, parseCsv: parseCsv, entriesFromCsv: entriesFromCsv,

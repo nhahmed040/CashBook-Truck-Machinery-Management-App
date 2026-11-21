@@ -936,6 +936,110 @@
     document.body.appendChild(ov);
   }
 
+
+  /* --- financial statements: income statement, cash flow, balance sheet, ageing --- */
+  function finBlocks(p, tab, from, to) {
+    var M = money, hd = function (h, n) { return { h: h, n: n }; };
+    if (tab === 'income') {
+      var is = L.incomeStatement(state, p, from, to);
+      var rows = [[t('fin_trip_income') + ' (' + is.trips + ' ' + t('trips_short') + ')', M(is.revenue)]];
+      is.byCode.forEach(function (c) { rows.push(['− ' + (c.code === 'wages_accrued' ? t('fin_wages_accrued') : codeLabel(c.code)), M(c.amount)]); });
+      var tk = is.byTruck.map(function (r) { return [r.truck ? L.truckName(p, r.truck) : t('no_truck_cash'), String(r.trips), M(r.revenue), M(r.cost), M(r.profit)]; });
+      return [
+        { title: t('fin_income'), head: [hd(t('description')), hd(t('amount'), 1)], rows: rows, totals: [[t('fin_total_costs'), M(is.cost)], [t('fin_net_profit') + (is.revenue > 0 ? ' (' + is.margin + '%)' : ''), M(is.profit), is.profit < 0 ? 'neg' : 'pos']] },
+        { title: t('fin_per_truck'), head: [hd(t('truck')), hd(t('trips_short'), 1), hd(t('fin_trip_income'), 1), hd(t('fin_total_costs'), 1), hd(t('fin_net_profit'), 1)], rows: tk }
+      ];
+    }
+    if (tab === 'cash') {
+      var cf = L.cashFlowStatement(state, p, from, to);
+      var inR = cf.inRows.map(function (r) { return [t('fk_' + r.kind), M(r.amount)]; });
+      var outR = cf.outRows.map(function (r) { return ['− ' + t('fk_' + r.kind), M(r.amount)]; });
+      var blocks = [
+        { title: t('fin_cashflow'), head: [hd(t('description')), hd(t('amount'), 1)], rows: [[t('fin_opening_cash'), M(cf.opening)]].concat(inR.length ? inR : [[t('fk_none'), M(0)]]), totals: [[t('fin_total_in'), M(cf.totalIn), 'pos']] },
+        { head: [hd(t('description')), hd(t('amount'), 1)], rows: outR.length ? outR : [[t('fk_none'), M(0)]], totals: [[t('fin_total_out'), M(cf.totalOut), 'neg'], [t('cash_net'), M(cf.net), cf.net < 0 ? 'neg' : 'pos'], [t('fin_closing_cash'), M(cf.closing)]] }
+      ];
+      if (cf.collectedByDrivers > 0) blocks.push({ head: [hd(t('description')), hd(t('amount'), 1)], rows: [[t('fin_collected_memo'), M(cf.collectedByDrivers)]] });
+      return blocks;
+    }
+    if (tab === 'balance') {
+      var bs = L.balanceSheet(state, p, to);
+      var A = bs.assets.map(function (a) { return [t('bs_' + a.key), M(a.amount)]; });
+      var Lb = bs.liabilities.map(function (a) { return [t('bs_' + a.key), M(a.amount)]; });
+      var out = [
+        { title: t('fin_assets'), head: [hd(t('description')), hd(t('amount'), 1)], rows: A, totals: [[t('fin_total_assets'), M(bs.totalAssets)]] },
+        { title: t('fin_liabilities'), head: [hd(t('description')), hd(t('amount'), 1)], rows: Lb, totals: [[t('fin_total_liabilities'), M(bs.totalLiabilities)], [t('fin_equity'), M(bs.equity), bs.equity < 0 ? 'neg' : 'pos']] }
+      ];
+      if (bs.drivers.length) out.push({ title: t('fin_drivers'), head: [hd(t('driver')), hd(t('held_by_driver'), 1), hd(t('wages_owed'), 1)], rows: bs.drivers.map(function (d) { return [d.name, M(d.held), M(d.owed)]; }) });
+      return out;
+    }
+    var ag = L.agingReport(p, to);
+    var heads = [hd(t('fin_party'))].concat(L.AGE_BUCKETS.map(function (b) { return hd(t('age_' + b), 1); })).concat([hd(t('fin_total'), 1)]);
+    function agBlock(title, g) {
+      return { title: title, head: heads, rows: g.rows.map(function (r) { return [r.name].concat(r.b.map(function (x) { return x ? M(x) : '–'; })).concat([M(r.total)]); }), totals: [[t('fin_total'), M(g.total)]] };
+    }
+    return [agBlock(t('fin_receivables'), ag.receivables), agBlock(t('fin_payables'), ag.payables)];
+  }
+  function openFinancials(p) {
+    var today = L.todayStr(), st = { tab: 'income', from: today.slice(0, 8) + '01', to: today };
+    var ov = el('div', 'overlay open sheetov'), m = el('div', 'modal importmodal finmodal');
+    function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); }
+    var tabs = [['income', 'fin_income'], ['cash', 'fin_cashflow'], ['balance', 'fin_balance'], ['aging', 'fin_aging']];
+    function titleOf() { return t(tabs.filter(function (x) { return x[0] === st.tab; })[0][1]); }
+    function isRange() { return st.tab === 'income' || st.tab === 'cash'; }
+    function subOf() { return p.name + ' · ' + (isRange() ? fmtDate(st.from) + ' – ' + fmtDate(st.to) : t('fin_as_at') + ' ' + fmtDate(st.to)); }
+    function draw() {
+      m.textContent = '';
+      m.appendChild(el('h2', null, t('fin_title')));
+      var seg = el('div', 'seg');
+      tabs.forEach(function (x) { seg.appendChild(btn(t(x[1]), st.tab === x[0] ? 'active' : '', function () { st.tab = x[0]; draw(); })); });
+      m.appendChild(seg);
+      var pn = panel(null);
+      (isRange() ? [['cash_from', 'from'], ['cash_to', 'to']] : [['fin_as_at', 'to']]).forEach(function (x) {
+        var lab = el('label', 'field'), di = document.createElement('input');
+        lab.appendChild(el('span', null, t(x[0])));
+        di.type = 'date'; di.value = st[x[1]];
+        di.addEventListener('change', function () { if (L.isDate(di.value)) { st[x[1]] = di.value; draw(); } });
+        lab.appendChild(di); makeDate(di, false); pn.appendChild(lab);
+      });
+      m.appendChild(pn);
+      var blocks = finBlocks(p, st.tab, st.from, st.to);
+      blocks.forEach(function (b) {
+        var box = el('div', 'finbox');
+        if (b.title) box.appendChild(el('h3', null, b.title));
+        var wrap = el('div', 'fintblwrap'), tb = el('table', 'fintbl'), th = el('thead'), tr = el('tr');
+        b.head.forEach(function (c) { tr.appendChild(el('th', c.n ? 'n' : '', c.h)); });
+        th.appendChild(tr); tb.appendChild(th);
+        var tbd = el('tbody');
+        if (!b.rows.length) { var er = el('tr'), ec = el('td', 'muted', t('no_data')); ec.colSpan = b.head.length; er.appendChild(ec); tbd.appendChild(er); }
+        b.rows.forEach(function (r) { var rr = el('tr'); r.forEach(function (v, i) { rr.appendChild(el('td', b.head[i] && b.head[i].n ? 'n' : '', v)); }); tbd.appendChild(rr); });
+        tb.appendChild(tbd); wrap.appendChild(tb); box.appendChild(wrap);
+        (b.totals || []).forEach(function (x) { box.appendChild(kv(x[0], x[1], x[2] || '', true)); });
+        m.appendChild(box);
+      });
+      m.appendChild(el('p', 'muted small', t('fin_note_' + st.tab)));
+      var br = el('div', 'btnrow');
+      br.appendChild(btn(t('stmt_print'), 'primary', function () {
+        printDoc(titleOf() + ' – ' + p.name, window.CBPrint.tableHtml({ title: titleOf(), lang: state.settings.lang, sub: subOf(), blocks: blocks, note: t('fin_note_' + st.tab) }));
+      }));
+      br.appendChild(btn(t('stmt_csv'), '', function () {
+        var rows = [[titleOf()], [subOf()]];
+        blocks.forEach(function (b) {
+          rows.push([]); if (b.title) rows.push([b.title]);
+          rows.push(b.head.map(function (c) { return c.h; }));
+          b.rows.forEach(function (r) { rows.push(r); });
+          (b.totals || []).forEach(function (x) { rows.push([x[0], x[1]]); });
+        });
+        saveFile('truckbook-' + st.tab + '-' + safeName(p.name) + '-' + today + '.csv', 'text/csv', L.rowsToCsv(rows));
+      }));
+      m.appendChild(br);
+      m.appendChild(btn(t('close'), 'block', close));
+    }
+    draw();
+    ov.appendChild(m);
+    ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+    document.body.appendChild(ov);
+  }
+
   /* ---------- statements ---------- */
   function statementModal(o) {
     var ov = el('div', 'overlay open sheetov'), m = el('div', 'modal importmodal');
@@ -1114,7 +1218,7 @@
     if (!p || !p.sync || p.sync.role !== 'view' || !$('projDetail').contains(ev.target)) return;
     var tg = ev.target.closest && ev.target.closest('button, .pay, input, select, textarea, label, [role=button]');
     if (!tg) return;
-    var safe = ['print_statement', 'export_report', 'export_trips', 'export_trips_csv', 'print', 'export_invoice_xlsx', 'stmt_print', 'stmt_csv', 'supplier_stmt', 'worker_stmt', 'customer_stmt'].map(function (k) { return t(k); });
+    var safe = ['print_statement', 'export_report', 'export_trips', 'export_trips_csv', 'print', 'export_invoice_xlsx', 'stmt_print', 'stmt_csv', 'fin_title', 'supplier_stmt', 'worker_stmt', 'customer_stmt'].map(function (k) { return t(k); });
     if (tg.closest('.seg') || tg.classList.contains('backlink') || tg.closest('[data-ro]') || safe.indexOf((tg.textContent || '').trim()) >= 0) return;
     ev.stopPropagation(); ev.preventDefault();
     toast(t('proj_view_only'));
@@ -1211,6 +1315,7 @@
 
     var row = el('div', 'btnrow');
     row.appendChild(btn(t('print_statement'), '', function () { printStatement(p); }));
+    row.appendChild(btn('📑 ' + t('fin_title'), 'primary', function () { openFinancials(p); }));
     row.appendChild(btn(t('edit_project'), '', function () { editProject(p); }));
     row.appendChild(btn(t('export_report'), '', function () {
       saveFile('truckbook-fleet-' + safeName(p.name) + '-' + L.todayStr() + '.csv', 'text/csv', L.projectReportCsv(state, p.id));
@@ -1300,9 +1405,9 @@
     }
     bill.payments.push(L.sanitizePayment(pay));
   }
-  function recordReceipt(p, inv, date, amount, bookId) {
-    var rc = { id: L.newId(), date: date, amount: amount, entryId: 0, bookId: '' };
-    var target = bookId ? bookById(bookId) : null;
+  function recordReceipt(p, inv, date, amount, bookId, driverId) {
+    var rc = { id: L.newId(), date: date, amount: amount, entryId: 0, bookId: '', driver: driverId || 0 };
+    var target = !driverId && bookId ? bookById(bookId) : null; // money collected by a driver goes into a book only when he hands it over
     if (target) {
       var e = L.sanitizeEntry({
         id: L.newId(), type: 'in', amount: amount, date: date,
@@ -1468,7 +1573,7 @@
       { key: 'invoice', label: t('invoice_title'), type: 'select', options: invOpts, value: v0.invoiceId ? String(v0.invoiceId) : '' }
     ];
     if (isNew) {
-      fields.push({ key: 'payNow', label: t('paid_on_spot'), type: 'select', options: [{ value: 'no', label: t('no') }, { value: 'yes', label: t('yes_cash') }], value: 'no' });
+      fields.push({ key: 'payNow', label: t('paid_on_spot'), type: 'select', options: [{ value: 'no', label: t('no') }, { value: 'yes', label: t('yes_cash') }].concat(p.workers.length ? [{ value: 'driver', label: t('yes_driver') }] : []), value: 'no' });
       fields.push({ key: 'bookId', label: t('record_in_book'), type: 'select', options: books, value: books.length > 1 ? books[1].value : '', showFor: { key: 'payNow', values: ['yes'] } });
     }
     openForm({
@@ -1479,14 +1584,15 @@
         var nt = L.sanitizeTrip({ id: x ? x.id : 0, date: L.isDate(v.date) ? v.date : L.todayStr(), truck: truckId, driver: Number(v.driver) || (tk ? tk.driverId : 0), customer: v.customer,
           from: v.from, to: v.to, material: v.material, ticket: v.ticket, qty: v.qty, unit: v.unit, rate: v.rate, note: v.note, invoiceId: Number(v.invoice) || 0 });
         if (!nt) return t('required');
+        if (isNew && v.payNow === 'driver' && !nt.driver) return t('pick_driver');
         if (isNew) p.trips.push(nt); else p.trips[p.trips.indexOf(x)] = nt;
-        if (isNew && v.payNow === 'yes') {
+        if (isNew && (v.payNow === 'yes' || v.payNow === 'driver')) {
           // paid in cash on the spot: an invoice for this trip, sent and received today
           var inv = L.sanitizeInvoice({ no: L.nextInvoiceNo(p), date: nt.date, customer: nt.customer, status: 'sent', sentDate: nt.date });
           p.invoices.push(inv);
           nt.invoiceId = inv.id;
           var bal = L.invoiceCalc(p, inv).balance;
-          if (bal > 0) recordReceipt(p, inv, nt.date, bal, v.bookId);
+          if (bal > 0) recordReceipt(p, inv, nt.date, bal, v.bookId, v.payNow === 'driver' ? nt.driver : 0);
         }
         save(); renderAll();
         return null;
@@ -1630,13 +1736,14 @@
       fields: [
         { key: 'date', label: t('payment_date'), type: 'date', value: L.todayStr(), required: true },
         { key: 'amount', label: t('pay_amount'), type: 'number', min: 0.01, value: c.balance, required: true },
-        { key: 'bookId', label: t('record_in_book'), type: 'select', options: books, value: books.length > 1 ? books[1].value : '' }
+        { key: 'by', label: t('received_by'), type: 'select', options: [{ value: '', label: t('received_by_me') }].concat(p.workers.map(function (w) { return { value: String(w.id), label: w.name + ' (' + t('driver_holds') + ')' }; })), value: '' },
+        { key: 'bookId', label: t('record_in_book'), type: 'select', options: books, value: books.length > 1 ? books[1].value : '', showFor: { key: 'by', values: [''] } }
       ],
       onSubmit: function (v) {
         var date = L.isDate(v.date) ? v.date : L.todayStr();
         var amount = L.round2(v.amount);
         if (!window.confirm(t('cf_receive', { amount: money(amount), name: inv.customer || inv.no || t('customer') }))) return ' ';
-        recordReceipt(p, inv, date, amount, v.bookId);
+        recordReceipt(p, inv, date, amount, v.bookId, Number(v.by) || 0);
         save(); renderAll();
         return null;
       }
@@ -1924,7 +2031,7 @@
 
 
   /* --- cash in / cash out of trucks and drivers --- */
-  var DRIVER_KINDS = ['advance', 'spent', 'return', 'salary', 'pay', 'deduct'];
+  var DRIVER_KINDS = ['advance', 'spent', 'return', 'handover', 'salary', 'pay', 'deduct'];
   function cashLabel(k) { return t('ck_' + k); }
   function driverName(p, id) { var w = byId(p.workers, id); return w ? w.name : '—'; }
   function secCash(body, p) {
@@ -2023,6 +2130,7 @@
     p.workers.forEach(function (w) {
       var ac = L.driverAccount(p, w.id), card = panel(null);
       card.appendChild(el('h3', null, '👤 ' + w.name + (w.truck ? ' · ' + L.truckName(p, w.truck) : '')));
+      if (ac.collected > 0) card.appendChild(kv(t('collected_from_customers'), money(ac.collected)));
       card.appendChild(kv(t('held_by_driver'), money(ac.held), ac.held < 0 ? 'neg' : ''));
       card.appendChild(kv(t('wages_owed'), money(ac.owed)));
       if (ac.attendance > 0) card.appendChild(el('div', 'muted small', t('incl_attendance', { n: money(L.round2(ac.attendance)) })));
@@ -2031,6 +2139,7 @@
       row.appendChild(btn(t('ck_advance_short'), 'primary', function () { editCash(p, null, { kind: 'advance', driver: w.id, truck: w.truck }); }));
       row.appendChild(btn(t('ck_spent_short'), '', function () { editCash(p, null, { kind: 'spent', driver: w.id, truck: w.truck }); }));
       row.appendChild(btn(t('ck_return_short'), '', function () { editCash(p, null, { kind: 'return', driver: w.id, truck: w.truck }); }));
+      row.appendChild(btn(t('ck_handover_short'), ac.collected > 0 ? 'primary' : '', function () { editCash(p, null, { kind: 'handover', driver: w.id, truck: w.truck, amount: ac.held > 0 ? ac.held : '' }); }));
       row.appendChild(btn(t('ck_pay_short'), '', function () { editCash(p, null, { kind: 'pay', driver: w.id, truck: w.truck }); }));
       row.appendChild(btn(t('ck_deduct_short'), '', function () { editCash(p, null, { kind: 'deduct', driver: w.id, truck: w.truck }); }));
       row.appendChild(btn(t('ck_salary_short'), '', function () { editCash(p, null, { kind: 'salary', driver: w.id, truck: w.truck }); }));
@@ -2055,10 +2164,10 @@
   function editCash(p, c, preset) {
     var isNew = !c;
     preset = preset || {};
-    var x = c || { date: L.todayStr(), kind: preset.kind || 'advance', truck: preset.truck || 0, driver: preset.driver || 0, amount: '', code: 'fuel', note: '' };
+    var x = c || { date: L.todayStr(), kind: preset.kind || 'advance', truck: preset.truck || 0, driver: preset.driver || 0, amount: preset.amount || '', code: 'fuel', note: '' };
     var books = linkedBookOptions(p, true);
     var codeOpts = L.CODES.filter(function (k) { return k !== 'driver'; }).map(function (k) { return { value: k, label: codeLabel(k) }; });
-    var moveKinds = ['advance', 'return', 'pay', 'in', 'out'];
+    var moveKinds = ['advance', 'return', 'handover', 'pay', 'in', 'out'];
     openForm({
       title: isNew ? t('add_cash') : t('edit_cash'),
       fields: [
@@ -2793,7 +2902,7 @@
   $('closeBook').addEventListener('click', function () { closeModal('bookModal'); });
 
   /* About */
-  var APP_VERSION = '1.1.0', APP_BUILD = 2;
+  var APP_VERSION = '1.2.0', APP_BUILD = 3;
   $('aboutBtn').addEventListener('click', function () { $('aboutVersion').textContent = APP_VERSION + ' (build ' + APP_BUILD + ')'; openModal('aboutModal'); });
   $('aboutBackup').addEventListener('click', function () { closeModal('aboutModal'); var b = $('backupBtn'); b.scrollIntoView({ block: 'center' }); b.click(); });
   $('closeAbout').addEventListener('click', function () { closeModal('aboutModal'); });

@@ -545,3 +545,13 @@ body.view-entries.books-home #bookBtn, body.view-entries.books-home .fab { displ
 .srchinp{width:100%;margin-bottom:8px}
 .srchgrp{margin:8px 0 2px;font-weight:600}
 
+
+.finbox { margin: 10px 0 14px; }
+.finbox h3 { margin: 0 0 6px; font-size: .95rem; }
+.fintblwrap { overflow-x: auto; }
+.fintbl { width: 100%; border-collapse: collapse; font-size: .86rem; }
+.fintbl th, .fintbl td { padding: 6px 8px; text-align: left; border-bottom: 1px solid rgba(128,128,128,.18); white-space: nowrap; }
+.fintbl td:first-child, .fintbl th:first-child { white-space: normal; }
+.fintbl th { font-weight: 600; }
+.fintbl .n { text-align: right; }
+.finmodal { max-height: 92vh; overflow-y: auto; }
