@@ -11,6 +11,7 @@ An independent, offline-first Android app (and browser app) for dump-truck owner
   - **Customers and invoices**: an invoice takes a customer's trips that are not invoiced yet, tracks Draft → Sent → Paid, records payments received (into a linked book), prints on A4 and exports to Excel with live formulas; per-customer balances and statements
   - **Cash in / cash out (Cash tab)**: a daily cash summary, a cash book per truck, and a cash account per driver (trip money given, what the driver spent, change returned, salary, wages paid, deductions) with a running balance; entries can post to a linked cash book, and driver spending counts as a truck cost
   - **Financial statements (Trucks → Overview)**: income statement, cash flow, balance sheet and ageing of what customers owe you and you owe suppliers, for any period, with print and CSV. Money a driver collects from a customer is held by the driver until he hands it over
+  - **Fuel report**: price per litre and its change over time, litres per 100 km and cost per km from the odometer on fuel bills; a warning when a trip's load is above the truck's capacity (when both are in tons or m³)
   - **Drivers and helpers**: daily rates, attendance by day, weekly wages that post to your costs, and a driver statement
   - **Profit per truck**: income, costs, litres of fuel and profit for every truck, plus fleet income, costs, profit and margin on the Overview; costs not tagged to a truck are shown separately
   - **Linked cash books**: link one or more cash books to a fleet so real cash and fleet costs agree

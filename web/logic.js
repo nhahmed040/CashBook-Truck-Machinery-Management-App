@@ -1119,6 +1119,36 @@
 
   /* Per truck: trips, income, costs (bills and cash-outs tagged with the truck), profit. Costs with no truck are
      returned as `shared`. */
+
+  /* The capacity text of a truck ("30 t", "12 m3") as a number, but only when it is in the same unit as the load (ton or m3), else 0. */
+  function capacityFor(truck, unit) {
+    if (!truck || !truck.capacity) return 0;
+    var txt = String(truck.capacity).toLowerCase().replace(',', '.'), m = txt.match(/(\d+(\.\d+)?)/);
+    if (!m) return 0;
+    var n = parseFloat(m[1]);
+    if (unit === 'm3' && /m\s*[3³]|cubic|cbm/.test(txt)) return n;
+    if (unit === 'ton' && /(^|[\d\s])(t|ton|tons|tonne|tonnes|qt|quintal)\b/.test(txt) && !/m\s*[3³]/.test(txt)) return /qt|quintal/.test(txt) ? n / 10 : n;
+    return 0;
+  }
+  /* Fuel fills of one truck, oldest first, with price per litre and (when odometer readings exist) litres per 100 km. */
+  function fuelReport(state, p, truckId) {
+    var fills = p.bills.filter(function (b) { return b.code === 'fuel' && b.truck === truckId && b.litres > 0; })
+      .sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.id - b.id; });
+    var prev = null, litres = 0, amount = 0, km = 0, litresKm = 0;
+    var rows = fills.map(function (b) {
+      var r = { date: b.date, litres: b.litres, amount: b.amount, price: round2(b.amount / b.litres), odo: b.odo, km: 0, per100: 0 };
+      litres += b.litres; amount += b.amount;
+      if (prev && b.odo > 0 && prev.odo > 0 && b.odo > prev.odo) {
+        r.km = b.odo - prev.odo; r.per100 = round2(b.litres / r.km * 100); // this fill refills what the last stretch used
+        km += r.km; litresKm += b.litres;
+      }
+      if (b.odo > 0) prev = b;
+      return r;
+    });
+    return { rows: rows, litres: round3(litres), amount: round2(amount), avgPrice: litres > 0 ? round2(amount / litres) : 0,
+      lastPrice: rows.length ? rows[rows.length - 1].price : 0, firstPrice: rows.length ? rows[0].price : 0,
+      per100: km > 0 ? round2(litresKm / km * 100) : 0, km: km, costPerKm: km > 0 ? round2(sum(rows.filter(function (r) { return r.km > 0; }), function (r) { return r.amount; }) / km) : 0 };
+  }
   function truckStats(state, projectId) {
     var p = null;
     state.projects.forEach(function (x) { if (x.id === projectId) p = x; });
@@ -1444,6 +1474,7 @@
     sanitizeProject: sanitizeProject, sanitizeBill: sanitizeBill, sanitizeInvoice: sanitizeInvoice, sanitizeTruck: sanitizeTruck, sanitizeTrip: sanitizeTrip,
     sanitizeWorker: sanitizeWorker, sanitizeAttendance: sanitizeAttendance, sanitizePayment: sanitizePayment,
     incomeStatement: incomeStatement, cashFlowStatement: cashFlowStatement, balanceSheet: balanceSheet, agingReport: agingReport, AGE_BUCKETS: AGE_BUCKETS, dayDiff: dayDiff,
+    capacityFor: capacityFor, fuelReport: fuelReport,
     sanitizeCash: sanitizeCash, CASH_KINDS: CASH_KINDS, CASH_MOVES: CASH_MOVES, driverAccount: driverAccount, cashLines: cashLines, truckCash: truckCash, cashOnHand: cashOnHand, cashCsv: cashCsv,
     hashPin: hashPin, newSalt: newSalt, validPin: validPin,
     buildCsv: buildCsv, parseCsv: parseCsv, entriesFromCsv: entriesFromCsv,

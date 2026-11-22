@@ -996,6 +996,28 @@
     }
     return [agBlock(t('fin_receivables'), ag.receivables), agBlock(t('fin_payables'), ag.payables)];
   }
+
+  function openFuelHistory(p, truck, f) {
+    var ov = el('div', 'overlay open sheetov'), m = el('div', 'modal importmodal finmodal');
+    function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); }
+    m.appendChild(el('h2', null, t('fuel_report') + ' · ' + truck.plate));
+    var wrap = el('div', 'fintblwrap'), tb = el('table', 'fintbl'), th = el('thead'), tr = el('tr');
+    [['date', 0], ['litres', 1], ['fuel_price', 1], ['amount', 1], ['odo_km', 1], ['l100', 1]].forEach(function (c) { tr.appendChild(el('th', c[1] ? 'n' : '', t(c[0]))); });
+    th.appendChild(tr); tb.appendChild(th);
+    var tbd = el('tbody');
+    f.rows.slice().reverse().forEach(function (r) {
+      var rr = el('tr');
+      [fmtDate(r.date), String(r.litres), money(r.price), money(r.amount), r.odo > 0 ? String(r.odo) : '–', r.per100 > 0 ? String(r.per100) : '–'].forEach(function (v, i) { rr.appendChild(el('td', i ? 'n' : '', v)); });
+      tbd.appendChild(rr);
+    });
+    tb.appendChild(tbd); wrap.appendChild(tb); m.appendChild(wrap);
+    m.appendChild(kv(t('avg_price'), money(f.avgPrice) + '/L', '', true));
+    m.appendChild(el('p', 'muted small', t('fuel_note')));
+    m.appendChild(btn(t('close'), 'block', close));
+    ov.appendChild(m);
+    ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+    document.body.appendChild(ov);
+  }
   function openFinancials(p) {
     var today = L.todayStr(), st = { tab: 'income', from: today.slice(0, 8) + '01', to: today };
     var ov = el('div', 'overlay open sheetov'), m = el('div', 'modal importmodal finmodal');
@@ -1324,6 +1346,26 @@
     if (ts.rows.length) tp.appendChild(el('p', 'note', t('shared_note')));
     body.appendChild(tp);
 
+
+    var fuelRows = ts.rows.map(function (r) { return { r: r, f: L.fuelReport(state, p, r.truck.id) }; }).filter(function (x) { return x.f.rows.length; });
+    if (fuelRows.length) {
+      var fp = panel(t('fuel_report'));
+      fuelRows.forEach(function (x) {
+        var row = el('button', 'remrow');
+        row.type = 'button';
+        var tx = el('span', 'stext');
+        tx.appendChild(el('b', null, x.r.truck.plate));
+        tx.appendChild(el('small', 'muted', [x.f.litres + ' L', t('avg_price') + ' ' + money(x.f.avgPrice) + '/L', x.f.per100 > 0 ? x.f.per100 + ' L/100 km' : '', x.f.costPerKm > 0 ? money(x.f.costPerKm) + '/km' : ''].filter(Boolean).join(' · ')));
+        row.appendChild(tx);
+        var chg = x.f.rows.length > 1 && x.f.firstPrice > 0 ? (x.f.lastPrice - x.f.firstPrice) / x.f.firstPrice * 100 : 0;
+        row.appendChild(el('span', 'amt ' + (chg > 0 ? 'out' : ''), money(x.f.lastPrice) + '/L' + (chg ? ' (' + (chg > 0 ? '+' : '') + L.round2(chg) + '%)' : '')));
+        row.addEventListener('click', function () { openFuelHistory(p, x.r.truck, x.f); });
+        fp.appendChild(row);
+      });
+      fp.appendChild(el('p', 'note', t('fuel_note')));
+      body.appendChild(fp);
+    }
+
     var ph = panel(t('fleet_photos'));
     var holder = el('div');
     photoWidget(holder, newPhotoState(p.photos), function (ids) { p.photos = L.photoIds(ids); save(); }, false);
@@ -1602,6 +1644,8 @@
           from: v.from, to: v.to, material: v.material, ticket: v.ticket, qty: v.qty, unit: v.unit, rate: v.rate, note: v.note, invoiceId: Number(v.invoice) || 0 });
         if (!nt) return t('required');
         if (isNew && v.payNow === 'driver' && !nt.driver) return t('pick_driver');
+        var cap = L.capacityFor(tk, nt.unit);
+        if (cap > 0 && nt.qty > cap && !window.confirm(t('overload_confirm', { qty: nt.qty, cap: cap, plate: tk.plate }))) return ' ';
         if (isNew) p.trips.push(nt); else p.trips[p.trips.indexOf(x)] = nt;
         if (isNew && (v.payNow === 'yes' || v.payNow === 'driver')) {
           // paid in cash on the spot: an invoice for this trip, sent and received today
@@ -2919,7 +2963,7 @@
   $('closeBook').addEventListener('click', function () { closeModal('bookModal'); });
 
   /* About */
-  var APP_VERSION = '1.2.1', APP_BUILD = 4;
+  var APP_VERSION = '1.3.0', APP_BUILD = 5;
   $('aboutBtn').addEventListener('click', function () { $('aboutVersion').textContent = APP_VERSION + ' (build ' + APP_BUILD + ')'; openModal('aboutModal'); });
   $('aboutBackup').addEventListener('click', function () { closeModal('aboutModal'); var b = $('backupBtn'); b.scrollIntoView({ block: 'center' }); b.click(); });
   $('closeAbout').addEventListener('click', function () { closeModal('aboutModal'); });
