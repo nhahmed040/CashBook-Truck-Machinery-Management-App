@@ -555,3 +555,5 @@ body.view-entries.books-home #bookBtn, body.view-entries.books-home .fab { displ
 .fintbl th { font-weight: 600; }
 .fintbl .n { text-align: right; }
 .finmodal { max-height: 92vh; overflow-y: auto; }
+
+.saveerr { position: sticky; top: 0; z-index: 60; background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }

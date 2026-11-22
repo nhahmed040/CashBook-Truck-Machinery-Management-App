@@ -36,8 +36,25 @@
   }
   function buzz() { try { if (navigator.vibrate) navigator.vibrate(8); } catch (e) { /* ignore */ } }
   var rev = 0;                       // bumps on every local change (sync checks it)
+  /* a failed save must never be silent: show a red banner until a save works again */
+  var saveFailed = false;
+  function showSaveError(on) {
+    var b = document.getElementById('saveErrBanner');
+    if (!on) { if (b) b.hidden = true; return; }
+    if (!b) {
+      b = el('div', 'bkbanner saveerr');
+      b.id = 'saveErrBanner';
+      b.setAttribute('role', 'alert');
+      b.appendChild(el('span', 'bktext', t('save_failed')));
+      b.appendChild(btn(t('backup_now'), 'primary', function () { doBackup(); }));
+      document.body.insertBefore(b, document.body.firstChild);
+    }
+    b.hidden = false;
+  }
   function saveRaw() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { /* storage unavailable */ }
+    var ok = true;
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) { ok = false; }
+    if (ok === saveFailed) { saveFailed = !ok; showSaveError(!ok); }
   }
   /* each book remembers the day it last changed: a cheap fingerprint of its name and entries is compared on every save */
   var bookFp = {};
@@ -2902,7 +2919,7 @@
   $('closeBook').addEventListener('click', function () { closeModal('bookModal'); });
 
   /* About */
-  var APP_VERSION = '1.2.0', APP_BUILD = 3;
+  var APP_VERSION = '1.2.1', APP_BUILD = 4;
   $('aboutBtn').addEventListener('click', function () { $('aboutVersion').textContent = APP_VERSION + ' (build ' + APP_BUILD + ')'; openModal('aboutModal'); });
   $('aboutBackup').addEventListener('click', function () { closeModal('aboutModal'); var b = $('backupBtn'); b.scrollIntoView({ block: 'center' }); b.click(); });
   $('closeAbout').addEventListener('click', function () { closeModal('aboutModal'); });
