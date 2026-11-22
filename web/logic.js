@@ -173,7 +173,11 @@
     };
   }
 
-  var UNITS = ['trip', 'load', 'm3', 'ton', 'day', 'hour'];
+  var UNITS = ['trip', 'load', 'm3', 'ton', 'day', 'hour', 'month'];
+  /* Kinds of work. The unit decides the kind, so older entries need no migration. */
+  var WORK_TYPES = ['trip', 'load_m3', 'load_ton', 'rent_hour', 'rent_day', 'rent_month'];
+  var WORK_UNIT = { trip: 'trip', load_m3: 'm3', load_ton: 'ton', rent_hour: 'hour', rent_day: 'day', rent_month: 'month' };
+  function workType(x) { return x.unit === 'm3' ? 'load_m3' : x.unit === 'ton' ? 'load_ton' : x.unit === 'hour' ? 'rent_hour' : x.unit === 'day' ? 'rent_day' : x.unit === 'month' ? 'rent_month' : 'trip'; }
 
   /* A truck of the fleet. The three dates drive the "expires / due" reminders. */
   function sanitizeTruck(x) {
@@ -216,7 +220,13 @@
       rate: rate,
       amount: amount,
       invoiceId: validId(x.invoiceId) ? x.invoiceId : 0,
-      note: str(x.note, 80)
+      note: str(x.note, 80),
+      loads: num3(x.loads, 0),                         // number of loads (load work, optional)
+      start: isDate(x.start) ? x.start : '',           // rent: first and last day
+      end: isDate(x.end) ? x.end : '',
+      meterStart: num3(x.meterStart, 0),               // rent by the hour: hour-meter readings
+      meterEnd: num3(x.meterEnd, 0),
+      fuelByCustomer: x.fuelByCustomer === true || x.fuelByCustomer === 'yes'
     };
   }
 
@@ -985,7 +995,8 @@
     var items = costItems(state, p).filter(function (c) { return inRange(c.date, from, to); });
     var byCode = {}, byTruck = {}, revenue = 0, cost = 0;
     function tr(id) { id = p.trucks.some(function (x) { return x.id === id; }) ? id : 0; return byTruck[id] || (byTruck[id] = { truck: id, trips: 0, revenue: 0, cost: 0, profit: 0 }); }
-    trips.forEach(function (x) { revenue += x.amount; var r = tr(x.truck); r.revenue += x.amount; r.trips++; });
+    var byType = {};
+    trips.forEach(function (x) { revenue += x.amount; var r = tr(x.truck); r.revenue += x.amount; r.trips++; var wt = workType(x), b = byType[wt] || (byType[wt] = { type: wt, count: 0, qty: 0, amount: 0 }); b.count++; b.qty += x.qty; b.amount += x.amount; });
     items.forEach(function (c) { cost += c.amount; byCode[c.code] = (byCode[c.code] || 0) + c.amount; tr(c.truck).cost += c.amount; });
     var rows;
     // wages earned in the period but not yet paid (wages that are paid already count as costs above)
@@ -994,7 +1005,8 @@
     rows = Object.keys(byTruck).map(function (k) { var r = byTruck[k]; r.revenue = round2(r.revenue); r.cost = round2(r.cost); r.profit = round2(r.revenue - r.cost); return r; })
       .sort(function (a, b) { return (a.truck === 0) - (b.truck === 0) || b.profit - a.profit; });
     revenue = round2(revenue); cost = round2(cost);
-    return { from: from, to: to, trips: trips.length, revenue: revenue, byCode: Object.keys(byCode).map(function (k) { return { code: k, amount: round2(byCode[k]) }; }).sort(function (a, b) { return b.amount - a.amount; }),
+    var typeRows = WORK_TYPES.filter(function (k) { return byType[k]; }).map(function (k) { var b = byType[k]; return { type: k, count: b.count, qty: round3(b.qty), amount: round2(b.amount) }; });
+    return { from: from, to: to, trips: trips.length, revenue: revenue, byType: typeRows, byCode: Object.keys(byCode).map(function (k) { return { code: k, amount: round2(byCode[k]) }; }).sort(function (a, b) { return b.amount - a.amount; }),
       cost: cost, profit: round2(revenue - cost), margin: revenue > 0 ? round2((revenue - cost) / revenue * 100) : 0, byTruck: rows };
   }
   /* Cash flow: money that moved in or out of the owner's cash box (driver-collected money counts when handed over). */
@@ -1468,7 +1480,7 @@
     MODES: MODES, KINDS: KINDS, STAFF_ROLES: STAFF_ROLES,
     sanitizeContact: sanitizeContact, sanitizeBusiness: sanitizeBusiness, contactBalances: contactBalances,
     rangeEntries: rangeEntries, reminders: reminders,
-    LANGS: LANGS, CURRENCIES: CURRENCIES, THEMES: THEMES, CALENDARS: CALENDARS, CODES: CODES, UNITS: UNITS,
+    LANGS: LANGS, CURRENCIES: CURRENCIES, THEMES: THEMES, CALENDARS: CALENDARS, CODES: CODES, UNITS: UNITS, WORK_TYPES: WORK_TYPES, WORK_UNIT: WORK_UNIT, workType: workType,
     newId: newId, todayStr: todayStr, isDate: isDate, round2: round2, round3: round3, round6: round6,
     sanitizeEntry: sanitizeEntry, sanitizeState: sanitizeState, defaultState: defaultState, migrateOld: migrateOld,
     sanitizeProject: sanitizeProject, sanitizeBill: sanitizeBill, sanitizeInvoice: sanitizeInvoice, sanitizeTruck: sanitizeTruck, sanitizeTrip: sanitizeTrip,

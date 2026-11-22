@@ -3,7 +3,7 @@
 
   var L = window.CBLogic;
   var STORAGE_KEY = 'truckbook.data.v1';
-  var SECTIONS = ['overview', 'trucks', 'trips', 'costs', 'customers', 'drivers', 'cash', 'books'];
+  var SECTIONS = ['overview', 'trucks', 'costs', 'customers', 'drivers', 'cash', 'books'];
 
   var $ = function (id) { return document.getElementById(id); };
   var CAL = window.CBCal;
@@ -964,6 +964,7 @@
       var tk = is.byTruck.map(function (r) { return [r.truck ? L.truckName(p, r.truck) : t('no_truck_cash'), String(r.trips), M(r.revenue), M(r.cost), M(r.profit)]; });
       return [
         { title: t('fin_income'), head: [hd(t('description')), hd(t('amount'), 1)], rows: rows, totals: [[t('fin_total_costs'), M(is.cost)], [t('fin_net_profit') + (is.revenue > 0 ? ' (' + is.margin + '%)' : ''), M(is.profit), is.profit < 0 ? 'neg' : 'pos']] },
+        { title: t('fin_by_type'), head: [hd(t('work_type')), hd(t('trips_short'), 1), hd(t('qty'), 1), hd(t('fin_trip_income'), 1)], rows: is.byType.map(function (r) { return [t('wt_' + r.type), String(r.count), String(r.qty), M(r.amount)]; }) },
         { title: t('fin_per_truck'), head: [hd(t('truck')), hd(t('trips_short'), 1), hd(t('fin_trip_income'), 1), hd(t('fin_total_costs'), 1), hd(t('fin_net_profit'), 1)], rows: tk }
       ];
     }
@@ -1209,11 +1210,11 @@
       group(t('invoices'), r.invoices.length);
       r.invoices.forEach(function (x) { line((x.invoice.no || '') + ' ' + (x.invoice.customer || ''), x.project + ' · ' + fmtDate(x.invoice.date), '', function () { goProject(x.projectId, 'customers'); }); });
       group(t('trips'), r.trips.length);
-      r.trips.forEach(function (x) { line(fmtDate(x.trip.date) + ' · ' + (x.plate || '') + (x.trip.customer ? ' · ' + x.trip.customer : ''), x.project + ' · ' + [x.trip.from, x.trip.to].filter(Boolean).join(' → '), money(x.trip.amount), function () { goProject(x.projectId, 'trips'); }); });
+      r.trips.forEach(function (x) { line(fmtDate(x.trip.date) + ' · ' + (x.plate || '') + (x.trip.customer ? ' · ' + x.trip.customer : ''), x.project + ' · ' + [x.trip.from, x.trip.to].filter(Boolean).join(' → '), money(x.trip.amount), function () { close(); var wp = byId(state.projects, x.projectId); if (wp) openWork(wp, { truck: 0, customer: '', billed: '' }); }); });
       group(t('trucks'), r.trucks.length);
       r.trucks.forEach(function (x) { line(x.truck.plate, x.project + (x.truck.model ? ' · ' + x.truck.model : ''), '', function () { goProject(x.projectId, 'trucks'); }); });
       group(t('contacts'), r.contacts.length);
-      r.contacts.forEach(function (c) { line(c.name, [c.phone, c.email].filter(Boolean).join(' · '), '', function () { close(); showView('contacts'); renderAll(); }); });
+      r.contacts.forEach(function (c) { line(c.name, [c.phone, c.email].filter(Boolean).join(' · '), '', function () { close(); editContact(c); }); });
     }
     inp.addEventListener('input', render);
     ov.appendChild(m);
@@ -1270,7 +1271,42 @@
   }
 
   /* --- overview --- */
-  function goSection(sec) { ui.section = sec; renderProjects(); window.scrollTo(0, 0); }
+  function goSection(sec) {
+    if (ui.view === 'work') { var wf = workFleet(); if (wf) ui.projectId = wf.id; showView('projects'); }
+    ui.section = sec; renderProjects(); window.scrollTo(0, 0);
+  }
+  /* --- Work tab: the work entries (trips, loads, rent) of one fleet --- */
+  function workFleet() {
+    var p = ui.workFleetId ? byId(state.projects, ui.workFleetId) : null;
+    return p || currentProject() || state.projects[0] || null;
+  }
+  function openWork(p, filter) {
+    ui.workFleetId = p.id;
+    if (filter) ui.tripF = filter;
+    showView('work'); renderWork(); window.scrollTo(0, 0);
+  }
+  function refreshWork() { if (ui.view === 'work') renderWork(); else renderProjects(); }
+  function renderWork() {
+    var box = $('workBox');
+    if (!box) return;
+    box.textContent = '';
+    var p = workFleet();
+    if (!p) {
+      box.appendChild(el('p', 'empty', t('work_need_fleet')));
+      box.appendChild(btn(t('new_project'), 'primary block', function () { showView('projects'); newProject(); }));
+      return;
+    }
+    if (state.projects.length > 1) {
+      var lab = el('label', 'field'), sl = document.createElement('select');
+      lab.appendChild(el('span', null, t('work_fleet')));
+      state.projects.forEach(function (x) { sl.appendChild(option(String(x.id), x.name)); });
+      sl.value = String(p.id);
+      sl.addEventListener('change', function () { ui.workFleetId = Number(sl.value); ui.tripF = { truck: 0, customer: '', billed: '' }; renderWork(); });
+      lab.appendChild(sl);
+      var fp = panel(null); fp.appendChild(lab); box.appendChild(fp);
+    }
+    secTrips(box, p);
+  }
 
   function secOverview(body, p) {
     var s = L.projectSummary(state, p.id), ts = L.truckStats(state, p.id), today = L.todayStr();
@@ -1339,7 +1375,7 @@
         (r.litres > 0 ? ' · ' + r.litres + ' L' : '')));
       row.appendChild(tx);
       row.appendChild(el('span', 'amt ' + (r.profit < 0 ? 'out' : ''), money(r.profit)));
-      row.addEventListener('click', function () { ui.tripF = { truck: r.truck.id, customer: '', billed: '' }; goSection('trips'); });
+      row.addEventListener('click', function () { openWork(p, { truck: r.truck.id, customer: '', billed: '' }); });
       tp.appendChild(row);
     });
     if (ts.shared > 0) tp.appendChild(kv(t('shared_costs'), money(ts.shared)));
@@ -1504,7 +1540,7 @@
       }
       var row = el('div', 'btnrow');
       row.appendChild(btn(t('add_trip'), 'primary', function () { editTrip(p, null, { truck: x.id }); }));
-      row.appendChild(btn(t('trips'), '', function () { ui.tripF = { truck: x.id, customer: '', billed: '' }; goSection('trips'); }));
+      row.appendChild(btn(t('trips'), '', function () { openWork(p, { truck: x.id, customer: '', billed: '' }); }));
       row.appendChild(btn(t('edit_truck'), '', function () { editTruck(p, x); }));
       card.appendChild(row);
       body.appendChild(card);
@@ -1562,7 +1598,7 @@
       lab.appendChild(el('span', null, label));
       opts.forEach(function (o) { s.appendChild(option(o.value, o.label)); });
       s.value = val;
-      s.addEventListener('change', function () { on(s.value); renderProjects(); });
+      s.addEventListener('change', function () { on(s.value); refreshWork(); });
       lab.appendChild(s);
       pn.appendChild(lab);
     }
@@ -1592,45 +1628,69 @@
       card.type = 'button';
       var tx = el('span', 'stext');
       tx.appendChild(el('b', null, fmtDate(x.date) + ' · ' + (L.truckName(p, x.truck) || '—') + (x.customer ? ' · ' + x.customer : '')));
-      var route = [x.from, x.to].filter(Boolean).join(' → ');
-      var drv = byId(p.workers, x.driver);
-      tx.appendChild(el('small', 'muted', [route, x.material, x.qty + ' ' + t('unit_' + x.unit) + ' × ' + money(x.rate), drv ? drv.name : '', x.ticket ? '#' + x.ticket : ''].filter(Boolean).join(' · ')));
+      tx.appendChild(el('small', 'muted', workLine(p, x)));
       tx.appendChild(el('small', x.invoiceId ? 'muted' : 'neg', x.invoiceId && inv[x.invoiceId] ? t('invoice_title') + ' ' + (inv[x.invoiceId].no || '') : t('not_invoiced')));
       card.appendChild(tx);
       card.appendChild(el('span', 'amt', money(x.amount)));
       card.addEventListener('click', function () { editTrip(p, x); });
       body.appendChild(card);
     });
-    if (list.length > shown.length) body.appendChild(btn(t('show_all', { n: list.length }), 'block', function () { ui.tripAll = true; renderProjects(); }));
+    if (list.length > shown.length) body.appendChild(btn(t('show_all', { n: list.length }), 'block', function () { ui.tripAll = true; refreshWork(); }));
+  }
+
+  function workLine(p, x) {
+    var wt = L.workType(x), drv = byId(p.workers, x.driver), route = [x.from, x.to].filter(Boolean).join(' → ');
+    var rent = wt.indexOf('rent') === 0, parts = [t('wt_' + wt)];
+    if (rent && x.to) parts.push(x.to); else if (route) parts.push(route);
+    if (x.material) parts.push(x.material);
+    parts.push(x.qty + ' ' + t('unit_' + x.unit) + ' × ' + money(x.rate));
+    if (x.loads > 0) parts.push(x.loads + ' ' + t('loads_short'));
+    if (rent && x.start) parts.push(fmtDate(x.start) + (x.end ? ' – ' + fmtDate(x.end) : ''));
+    if (rent && x.fuelByCustomer) parts.push(t('fuel_cust_short'));
+    if (drv) parts.push(drv.name);
+    if (x.ticket) parts.push('#' + x.ticket);
+    return parts.filter(Boolean).join(' · ');
   }
 
   function editTrip(p, x, preset) {
     var isNew = !x;
-    if (isNew && !p.trucks.length) { toast(t('add_truck_first')); goSection('trucks'); return; }
+    if (isNew && !p.trucks.length) { toast(t('add_truck_first')); ui.projectId = p.id; if (ui.view !== 'projects') showView('projects'); goSection('trucks'); return; }
     var last = p.trips.slice().sort(newestFirst)[0] || {};
     var v0 = x;
     if (!v0) {
       var tr = preset && preset.truck ? byId(p.trucks, preset.truck) : (byId(p.trucks, last.truck) || p.trucks[0]);
       v0 = { date: L.todayStr(), truck: tr ? tr.id : 0, driver: tr ? tr.driverId : 0, customer: last.customer || '', from: last.from || '', to: last.to || '', material: last.material || '',
-        ticket: '', qty: 1, unit: last.unit || 'trip', rate: last.rate || '', note: '', invoiceId: 0 };
+        ticket: '', qty: 1, unit: last.unit || 'trip', rate: last.rate || '', note: '', invoiceId: 0, loads: 0, start: '', end: '', meterStart: 0, meterEnd: 0, fuelByCustomer: false };
     }
+    var curType = L.workType(v0), RENT = ['rent_hour', 'rent_day', 'rent_month'], LOAD = ['load_m3', 'load_ton'], ROUTE = ['trip', 'load_m3', 'load_ton'];
     var invOpts = [{ value: '', label: t('not_invoiced') }].concat(p.invoices.map(function (c) { return { value: String(c.id), label: (c.no || '') + (c.customer ? ' · ' + c.customer : '') }; }));
     var books = linkedBookOptions(p, true);
     var fields = [
+      { key: 'wtype', label: t('work_type'), type: 'select', options: L.WORK_TYPES.map(function (k) { return { value: k, label: t('wt_' + k) }; }), value: curType },
       { key: 'date', label: t('date'), type: 'date', value: v0.date, required: true },
       { key: 'truck', label: t('truck'), type: 'select', options: truckOptions(p, false, v0.truck), value: String(v0.truck) },
-      { key: 'driver', label: t('driver'), type: 'select', options: workerOptions(p), value: v0.driver ? String(v0.driver) : '' },
+      { key: 'driver', label: t('driver_operator'), type: 'select', options: workerOptions(p), value: v0.driver ? String(v0.driver) : '' },
       { key: 'customer', label: t('customer'), type: 'text', value: v0.customer, max: 60 },
-      { key: 'from', label: t('from_place'), type: 'text', value: v0.from, max: 40 },
-      { key: 'to', label: t('to_place'), type: 'text', value: v0.to, max: 40 },
-      { key: 'material', label: t('material'), type: 'text', value: v0.material, max: 30 },
-      { key: 'qty', label: t('qty'), type: 'number', min: 0.001, value: v0.qty, required: true },
-      { key: 'unit', label: t('unit'), type: 'select', options: L.UNITS.map(function (u) { return { value: u, label: t('unit_' + u) }; }), value: v0.unit },
-      { key: 'rate', label: t('rate_per_unit'), type: 'number', min: 0.01, value: v0.rate, required: true },
-      { key: 'ticket', label: t('ticket'), type: 'text', value: v0.ticket, max: 20 },
-      { key: 'note', label: t('remark'), type: 'text', value: v0.note, max: 80 },
-      { key: 'invoice', label: t('invoice_title'), type: 'select', options: invOpts, value: v0.invoiceId ? String(v0.invoiceId) : '' }
+      { key: 'from', label: t('from_place'), type: 'text', value: v0.from, max: 40, showFor: { key: 'wtype', values: ROUTE } },
+      { key: 'to', label: t('to_place'), type: 'text', value: RENT.indexOf(curType) < 0 ? v0.to : '', max: 40, showFor: { key: 'wtype', values: ROUTE } },
+      { key: 'site', label: t('site_place'), type: 'text', value: RENT.indexOf(curType) >= 0 ? v0.to : '', max: 40, showFor: { key: 'wtype', values: RENT } },
+      { key: 'material', label: t('material'), type: 'text', value: v0.material, max: 30, showFor: { key: 'wtype', values: ROUTE } },
+      { key: 'start', label: t('rent_start'), type: 'date', value: v0.start, showFor: { key: 'wtype', values: RENT } },
+      { key: 'end', label: t('rent_end'), type: 'date', value: v0.end, showFor: { key: 'wtype', values: RENT } },
+      { key: 'meterStart', label: t('meter_start'), type: 'number', min: 0, value: v0.meterStart || '', showFor: { key: 'wtype', values: ['rent_hour'] } },
+      { key: 'meterEnd', label: t('meter_end'), type: 'number', min: 0, value: v0.meterEnd || '', showFor: { key: 'wtype', values: ['rent_hour'] } }
     ];
+    L.WORK_TYPES.forEach(function (k) {
+      var u = L.WORK_UNIT[k], auto = k === 'rent_hour' || k === 'rent_day', mine = curType === k;
+      fields.push({ key: 'qty_' + u, label: t('q_' + u), type: 'number', min: 0.001, value: mine ? v0.qty : (k === 'trip' || LOAD.indexOf(k) >= 0 || k === 'rent_month' ? 1 : ''), required: !auto, showFor: { key: 'wtype', values: [k] } });
+      if (auto) fields.push({ type: 'note', text: t(k === 'rent_hour' ? 'rent_auto_hours' : 'rent_auto_days'), showFor: { key: 'wtype', values: [k] } });
+      fields.push({ key: 'rate_' + u, label: t('r_' + u), type: 'number', min: 0.01, value: mine ? v0.rate : (v0.rate || ''), required: true, showFor: { key: 'wtype', values: [k] } });
+    });
+    fields.push({ key: 'loads', label: t('loads_count'), type: 'number', min: 0, value: v0.loads || '', showFor: { key: 'wtype', values: LOAD } });
+    fields.push({ key: 'fuelBy', label: t('fuel_by_customer'), type: 'select', options: [{ value: 'no', label: t('fuel_me') }, { value: 'yes', label: t('fuel_customer') }], value: v0.fuelByCustomer ? 'yes' : 'no', showFor: { key: 'wtype', values: RENT } });
+    fields.push({ key: 'ticket', label: t('ticket'), type: 'text', value: v0.ticket, max: 20 });
+    fields.push({ key: 'note', label: t('remark'), type: 'text', value: v0.note, max: 80 });
+    fields.push({ key: 'invoice', label: t('invoice_title'), type: 'select', options: invOpts, value: v0.invoiceId ? String(v0.invoiceId) : '' });
     if (isNew) {
       fields.push({ key: 'payNow', label: t('paid_on_spot'), type: 'select', options: [{ value: 'no', label: t('no') }, { value: 'yes', label: t('yes_cash') }].concat(p.workers.length ? [{ value: 'driver', label: t('yes_driver') }] : []), value: 'no' });
       fields.push({ key: 'bookId', label: t('record_in_book'), type: 'select', options: books, value: books.length > 1 ? books[1].value : '', showFor: { key: 'payNow', values: ['yes'] } });
@@ -1639,16 +1699,25 @@
       title: isNew ? t('add_trip') : t('edit_trip'),
       fields: fields,
       onSubmit: function (v) {
+        var wt = v.wtype, rent = RENT.indexOf(wt) >= 0, u = L.WORK_UNIT[wt];
+        if (wt === 'trip' && x && x.unit === 'load') u = 'load';
+        var key = L.WORK_UNIT[wt];
         var truckId = Number(v.truck) || 0, tk = byId(p.trucks, truckId);
+        var qty = Number(v['qty_' + key]) || 0, start = rent && L.isDate(v.start) ? v.start : '', end = rent && L.isDate(v.end) ? v.end : '';
+        var m0 = Number(v.meterStart) || 0, m1 = Number(v.meterEnd) || 0;
+        if (wt === 'rent_hour' && !qty && m1 > m0) qty = L.round3(m1 - m0);
+        if (wt === 'rent_day' && !qty && start && end && end >= start) qty = L.dayDiff(start, end) + 1;
+        if (!(qty > 0)) return t('required');
         var nt = L.sanitizeTrip({ id: x ? x.id : 0, date: L.isDate(v.date) ? v.date : L.todayStr(), truck: truckId, driver: Number(v.driver) || (tk ? tk.driverId : 0), customer: v.customer,
-          from: v.from, to: v.to, material: v.material, ticket: v.ticket, qty: v.qty, unit: v.unit, rate: v.rate, note: v.note, invoiceId: Number(v.invoice) || 0 });
+          from: rent ? '' : v.from, to: rent ? v.site : v.to, material: rent ? '' : v.material, ticket: v.ticket, qty: qty, unit: u, rate: v['rate_' + key], note: v.note, invoiceId: Number(v.invoice) || 0,
+          loads: LOAD.indexOf(wt) >= 0 ? v.loads : 0, start: start, end: end, meterStart: wt === 'rent_hour' ? m0 : 0, meterEnd: wt === 'rent_hour' ? m1 : 0, fuelByCustomer: rent && v.fuelBy === 'yes' });
         if (!nt) return t('required');
         if (isNew && v.payNow === 'driver' && !nt.driver) return t('pick_driver');
         var cap = L.capacityFor(tk, nt.unit);
         if (cap > 0 && nt.qty > cap && !window.confirm(t('overload_confirm', { qty: nt.qty, cap: cap, plate: tk.plate }))) return ' ';
         if (isNew) p.trips.push(nt); else p.trips[p.trips.indexOf(x)] = nt;
         if (isNew && (v.payNow === 'yes' || v.payNow === 'driver')) {
-          // paid in cash on the spot: an invoice for this trip, sent and received today
+          // paid in cash on the spot: an invoice for this work, sent and received today
           var inv = L.sanitizeInvoice({ no: L.nextInvoiceNo(p), date: nt.date, customer: nt.customer, status: 'sent', sentDate: nt.date });
           p.invoices.push(inv);
           nt.invoiceId = inv.id;
@@ -2328,6 +2397,7 @@
     applyEntriesScreen();
     renderEntries();
     renderProjects();
+    renderWork();
     renderContacts();
     renderReports();
     renderSettings();
@@ -2337,14 +2407,14 @@
     if (window.__renderCloud) window.__renderCloud();
   }
 
-  var VIEWS = ['entries', 'contacts', 'projects', 'reports', 'settings'];
+  var VIEWS = ['entries', 'contacts', 'work', 'projects', 'reports', 'settings'];
   function showView(name) {
     ui.view = name;
     VIEWS.forEach(function (v) { $('view-' + v).hidden = v !== name; });
     Array.prototype.forEach.call(document.querySelectorAll('.tabs button'), function (b) {
       b.classList.toggle('active', b.getAttribute('data-view') === name);
     });
-    document.body.classList.remove('view-entries', 'view-contacts', 'view-projects', 'view-reports', 'view-settings');
+    document.body.classList.remove('view-entries', 'view-contacts', 'view-work', 'view-projects', 'view-reports', 'view-settings');
     document.body.classList.add('view-' + name);
     applyEntriesScreen();
     window.scrollTo(0, 0);
@@ -2461,8 +2531,14 @@
     if (ui.view === 'projects') {
       var p = currentProject();
       if (!p) { newProject(); return; }
-      ({ overview: function () { editTrip(p, null); }, trucks: function () { editTruck(p, null); }, trips: function () { editTrip(p, null, tripFilter().truck ? { truck: tripFilter().truck } : null); }, costs: function () { editBill(p, null); },
+      ({ overview: function () { editTrip(p, null); }, trucks: function () { editTruck(p, null); }, costs: function () { editBill(p, null); },
          customers: function () { newInvoiceFlow(p); }, drivers: function () { editWorker(p, null); }, cash: function () { editCash(p, null, {}); }, books: function () { linkBookForm(p); } })[ui.section]();
+      return;
+    }
+    if (ui.view === 'work') {
+      var wf = workFleet();
+      if (!wf) { newProject(); return; }
+      editTrip(wf, null, tripFilter().truck ? { truck: tripFilter().truck } : null);
       return;
     }
     openEntry(null);
@@ -2963,7 +3039,7 @@
   $('closeBook').addEventListener('click', function () { closeModal('bookModal'); });
 
   /* About */
-  var APP_VERSION = '1.3.0', APP_BUILD = 5;
+  var APP_VERSION = '1.4.0', APP_BUILD = 6;
   $('aboutBtn').addEventListener('click', function () { $('aboutVersion').textContent = APP_VERSION + ' (build ' + APP_BUILD + ')'; openModal('aboutModal'); });
   $('aboutBackup').addEventListener('click', function () { closeModal('aboutModal'); var b = $('backupBtn'); b.scrollIntoView({ block: 'center' }); b.click(); });
   $('closeAbout').addEventListener('click', function () { closeModal('aboutModal'); });

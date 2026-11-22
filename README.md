@@ -6,7 +6,7 @@ An independent, offline-first Android app (and browser app) for dump-truck owner
 
 - **Dump-truck fleet management** (Trucks tab), separate from your cash books:
   - **Trucks**: plate, make/model, capacity, usual driver, and reminders 30 days before insurance, inspection and service dates; mark a truck "not in use" without losing its history
-  - **Trips**: log every haul with truck, driver, customer, from/to, material, quantity × rate (per trip, load, m³, tonne, day or hour), and a ticket or delivery-note number; filter by truck, customer or invoiced/not invoiced; print or export to CSV
+  - **Work** tab (the old Trips): six types of work — trip, load by volume (m³), load by weight (tonnes), and rent by the hour, day or month. Hours come from the hour meter, days from the start and end dates; rent entries record who pays the fuel. Each entry has truck or machine, driver or operator, customer, place, material, ticket number and a pay-on-the-spot option; filter by truck, customer or invoiced/not invoiced; income by type of work in the income statement; print or export to CSV
   - **Fuel, repairs and bills**: add fuel (with litres and odometer), repairs/service, spare parts, tyres, insurance and other costs to a truck; paid now (posts a cash-out entry in a linked book) or on credit (a supplier bill with part payments and a "who you owe" list)
   - **Customers and invoices**: an invoice takes a customer's trips that are not invoiced yet, tracks Draft → Sent → Paid, records payments received (into a linked book), prints on A4 and exports to Excel with live formulas; per-customer balances and statements
   - **Cash in / cash out (Cash tab)**: a daily cash summary, a cash book per truck, and a cash account per driver (trip money given, what the driver spent, change returned, salary, wages paid, deductions) with a running balance; entries can post to a linked cash book, and driver spending counts as a truck cost
@@ -31,7 +31,7 @@ An independent, offline-first Android app (and browser app) for dump-truck owner
 
 ## New in 2.0
 
-- **Contacts** (customers and suppliers), picked from your phone book or typed in: attach one to any entry, search entries by contact name or phone, and see each contact's running totals (money in, money out, net) in the Contacts tab
+- **Contacts** (customers and suppliers), picked from your phone book or typed in: attach one to any cash-book entry and search entries by contact name or phone (the separate Contacts tab was replaced by the Work tab)
 - **Entry filters** by contact, payment mode (cash, bank, mobile money, cheque), member (who recorded it) and category
 - **Businesses**: group books under several businesses, each with its own staff list and roles (manager, accountant, cashier, viewer)
 - **Reminders** for supplier bills (with an optional due date), unpaid or late customer invoices, drivers' unpaid wages, and truck insurance / inspection / service dates
@@ -51,13 +51,13 @@ The APK is built automatically by GitHub Actions.
 2. Download the **TruckBook-apk** artifact (a zip containing `TruckBook.apk`)
 3. Unzip it on your phone and open `TruckBook.apk`; allow "Install unknown apps" if Android asks
 
-To publish a downloadable release, push a tag such as `v1.3`: the workflow attaches `TruckBook.apk` to that release. You can also run a build manually from the Actions tab.
+To publish a downloadable release, push a tag such as `v1.4`: the workflow attaches `TruckBook.apk` to that release. You can also run a build manually from the Actions tab.
 
 ### Updating
 
 Builds are signed with a fixed key (`app/truckbook.keystore`), so a new APK installs over the old one and keeps your data. This key is public in the repo on purpose: it is for sideloading your own build only, not for app stores.
 
-> Updating from 1.1 or 1.2 to 1.3 keeps all your data. Versions before 1.1 were signed with a throwaway key. To move from one of those, **export your data first** (Settings → Export this book, per book), uninstall the old app, install 1.1, then use **Restore from file** to import the CSV.
+> Updating from 1.1 or 1.2 to 1.4 keeps all your data. Versions before 1.1 were signed with a throwaway key. To move from one of those, **export your data first** (Settings → Export this book, per book), uninstall the old app, install 1.1, then use **Restore from file** to import the CSV.
 
 ## Camera and calculator (2.12)
 
