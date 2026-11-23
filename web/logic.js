@@ -253,11 +253,35 @@
   }
 
   /* Drivers and helpers; truck = the truck they usually drive. */
+  /* does anything in the fleet's books refer to this worker? (used to block deleting him) */
+  function workerHasRecords(p, id) {
+    return (p.cash || []).some(function (c) { return c.driver === id; }) ||
+      p.attendance.some(function (a) { return a.workerId === id; }) ||
+      p.invoices.some(function (inv) { return inv.receipts.some(function (r) { return r.driver === id; }); });
+  }
+
   function sanitizeWorker(w) {
     if (!w || typeof w !== 'object') return null;
     var name = str(w.name, 60);
     if (!name) return null;
     return { id: validId(w.id) ? w.id : newId(), name: name, role: str(w.role, 40), rate: num(w.rate, 0), truck: validId(w.truck) ? w.truck : 0 };
+  }
+
+  /* The truck's driverId is the one true link; worker.truck is a copy kept in step with it.
+     A worker whose usual truck has no driver yet becomes that truck's driver; a clash is settled in the truck's favour. */
+  function syncDriverLinks(trucks, workers) {
+    var wById = {};
+    workers.forEach(function (w) { wById[w.id] = w; });
+    trucks.forEach(function (tk) { if (tk.driverId && !wById[tk.driverId]) tk.driverId = 0; });
+    workers.forEach(function (w) {
+      var mine = trucks.filter(function (tk) { return tk.driverId === w.id; });
+      if (mine.length) {
+        if (!mine.some(function (tk) { return tk.id === w.truck; })) w.truck = mine[0].id;
+      } else if (w.truck) {
+        var tk = trucks.filter(function (q) { return q.id === w.truck; })[0];
+        if (tk && !tk.driverId) tk.driverId = w.id; else w.truck = 0;
+      }
+    });
   }
 
   function sanitizeAttendance(a) {
@@ -268,6 +292,7 @@
       workerId: a.workerId,
       days: num(a.days, 0, 3),
       rate: num(a.rate, 0),
+      truck: validId(a.truck) ? a.truck : 0,
       paid: !!a.paid
     };
   }
@@ -308,6 +333,7 @@
     var tIds = {};
     trucks.forEach(function (x) { tIds[x.id] = true; });
     workers.forEach(function (w) { if (w.truck && !tIds[w.truck]) w.truck = 0; });
+    syncDriverLinks(trucks, workers);
     // one attendance row per worker per day (the last one wins)
     var attMap = {};
     mapList(p.attendance, sanitizeAttendance, 50000).forEach(function (a) {
@@ -416,7 +442,7 @@
 
   /* ---------- Recently deleted: removed items stay recoverable for 30 days ---------- */
   var TRASH_DAYS = 30, TRASH_MAX = 200;
-  var TRASH_KINDS = ['entry', 'trip', 'truck', 'bill', 'invoice', 'contact', 'project', 'book'];
+  var TRASH_KINDS = ['entry', 'trip', 'truck', 'cash', 'bill', 'invoice', 'contact', 'project', 'book'];
   function sanitizeTrash(list, now) {
     var out = [], seen = {};
     now = now || Date.now();
@@ -1261,17 +1287,21 @@
 
   /* Unpaid attendance in [from, to], grouped by worker. */
   function payroll(project, from, to) {
-    var byWorker = {};
+    var byWorker = {}, wk = {};
+    project.workers.forEach(function (w) { wk[w.id] = w; });
     project.attendance.forEach(function (a) {
       if (a.paid || a.days <= 0 || a.date < from || a.date > to) return;
-      var r = byWorker[a.workerId] || (byWorker[a.workerId] = { workerId: a.workerId, days: 0, amount: 0 });
+      var r = byWorker[a.workerId] || (byWorker[a.workerId] = { workerId: a.workerId, days: 0, amount: 0, byTruck: {} });
+      var amt = a.days * a.rate, tid = a.truck || (wk[a.workerId] ? wk[a.workerId].truck : 0) || 0;
+      if (tid && !project.trucks.some(function (q) { return q.id === tid; })) tid = 0;
       r.days = round2(r.days + a.days);
-      r.amount = round2(r.amount + a.days * a.rate);
+      r.amount = round2(r.amount + amt);
+      r.byTruck[tid] = round2((r.byTruck[tid] || 0) + amt);
     });
     var rows = [];
     project.workers.forEach(function (w) {
       var r = byWorker[w.id];
-      if (r) rows.push({ workerId: w.id, name: w.name, days: r.days, amount: r.amount });
+      if (r) rows.push({ workerId: w.id, name: w.name, days: r.days, amount: r.amount, byTruck: r.byTruck });
     });
     return { rows: rows, total: sum(rows, function (r) { return r.amount; }) };
   }
@@ -1499,7 +1529,7 @@
     newId: newId, todayStr: todayStr, isDate: isDate, round2: round2, round3: round3, round6: round6,
     sanitizeEntry: sanitizeEntry, sanitizeState: sanitizeState, defaultState: defaultState, migrateOld: migrateOld,
     sanitizeProject: sanitizeProject, sanitizeBill: sanitizeBill, sanitizeInvoice: sanitizeInvoice, sanitizeTruck: sanitizeTruck, sanitizeTrip: sanitizeTrip,
-    sanitizeWorker: sanitizeWorker, sanitizeAttendance: sanitizeAttendance, sanitizePayment: sanitizePayment,
+    syncDriverLinks: syncDriverLinks, workerHasRecords: workerHasRecords, sanitizeWorker: sanitizeWorker, sanitizeAttendance: sanitizeAttendance, sanitizePayment: sanitizePayment,
     incomeStatement: incomeStatement, cashFlowStatement: cashFlowStatement, balanceSheet: balanceSheet, agingReport: agingReport, AGE_BUCKETS: AGE_BUCKETS, dayDiff: dayDiff,
     capacityFor: capacityFor, fuelReport: fuelReport,
     sanitizeCash: sanitizeCash, CASH_KINDS: CASH_KINDS, CASH_MOVES: CASH_MOVES, driverAccount: driverAccount, cashLines: cashLines, truckCash: truckCash, cashOnHand: cashOnHand, cashCsv: cashCsv,

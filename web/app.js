@@ -1572,6 +1572,11 @@
           insuranceDate: v.insuranceDate, inspectionDate: v.inspectionDate, serviceDate: v.serviceDate, active: v.active !== 'no', note: v.note, photos: pst.ids });
         if (!nt) return t('required');
         if (isNew) p.trucks.push(nt); else p.trucks[p.trucks.indexOf(x)] = nt;
+        p.workers.forEach(function (w) {
+          if (w.truck === nt.id && w.id !== nt.driverId) w.truck = 0;
+          if (w.id === nt.driverId) w.truck = nt.id;
+        });
+        L.syncDriverLinks(p.trucks, p.workers);
         save(); renderAll();
         return null;
       },
@@ -2068,7 +2073,7 @@
         days = Math.round(days * 2) / 2;
         p.attendance = p.attendance.filter(function (a) { return !(a.workerId === w.id && a.date === ui.labourDate); });
         if (days > 0) {
-          var a = L.sanitizeAttendance({ id: L.newId(), date: ui.labourDate, workerId: w.id, days: days, rate: w.rate, paid: false });
+          var a = L.sanitizeAttendance({ id: L.newId(), date: ui.labourDate, workerId: w.id, days: days, rate: w.rate, truck: w.truck || 0, paid: false });
           if (a) p.attendance.push(a);
         }
         save(); renderProjects();
@@ -2106,13 +2111,21 @@
           var nw = L.sanitizeWorker({ name: v.name, role: v.role, rate: v.rate, truck: tid });
           if (!nw) return t('required');
           p.workers.push(nw);
+          w = nw;
         } else {
           w.name = v.name.slice(0, 60); w.role = v.role.slice(0, 40); w.rate = Math.max(0, L.round2(v.rate)); w.truck = tid;
         }
+        // the truck's driver follows what was chosen here
+        p.trucks.forEach(function (tk) { if (tk.driverId === w.id && tk.id !== tid) tk.driverId = 0; });
+        var ttk = byId(p.trucks, tid);
+        if (ttk) ttk.driverId = w.id;
+        L.syncDriverLinks(p.trucks, p.workers);
         save(); renderAll();
         return null;
       },
       onDelete: isNew ? null : function () {
+        if (p.trucks.some(function (tk) { return tk.driverId === w.id; })) { toast(t('worker_is_driver')); return false; }
+        if (L.workerHasRecords(p, w.id)) { toast(t('worker_has_records')); return false; }
         if (!window.confirm(t('confirm_delete_worker'))) return false;
         p.workers = p.workers.filter(function (a) { return a.id !== w.id; });
         p.attendance = p.attendance.filter(function (a) { return a.workerId !== w.id; });
@@ -2141,9 +2154,11 @@
           // one cash-out entry per truck (drivers' usual truck), so each truck's profit carries its drivers' pay
           var groups = {}, order = [];
           pr.rows.forEach(function (r) {
-            var w = byId(p.workers, r.workerId), tid = w && byId(p.trucks, w.truck) ? w.truck : 0;
-            if (!(tid in groups)) { groups[tid] = 0; order.push(tid); }
-            groups[tid] = L.round2(groups[tid] + r.amount);
+            Object.keys(r.byTruck || { 0: r.amount }).forEach(function (k) {
+              var tid = Number(k) || 0;
+              if (!(tid in groups)) { groups[tid] = 0; order.push(tid); }
+              groups[tid] = L.round2(groups[tid] + (r.byTruck ? r.byTruck[k] : r.amount));
+            });
           });
           order.forEach(function (tid) {
             if (!(groups[tid] > 0)) return;
@@ -3090,7 +3105,7 @@
   $('closeBook').addEventListener('click', function () { closeModal('bookModal'); });
 
   /* About */
-  var APP_VERSION = '1.5.0', APP_BUILD = 7;
+  var APP_VERSION = '1.6.0', APP_BUILD = 8;
   $('aboutBtn').addEventListener('click', function () { $('aboutVersion').textContent = APP_VERSION + ' (build ' + APP_BUILD + ')'; openModal('aboutModal'); });
   $('aboutBackup').addEventListener('click', function () { closeModal('aboutModal'); var b = $('backupBtn'); b.scrollIntoView({ block: 'center' }); b.click(); });
   $('closeAbout').addEventListener('click', function () { closeModal('aboutModal'); });
