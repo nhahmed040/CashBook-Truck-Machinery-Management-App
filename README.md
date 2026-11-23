@@ -6,6 +6,7 @@ An independent, offline-first Android app (and browser app) for dump-truck owner
 
 - **Dump-truck fleet management** (Trucks tab), separate from your cash books:
   - **Trucks**: plate, make/model, capacity, usual driver, and reminders 30 days before insurance, inspection and service dates; mark a truck "not in use" without losing its history
+  - **Driver Account** tab: one card per driver. Money in: payments collected from customers (held by the driver until handed over), change returned, loans repaid. Truck expenses: trip money given and what the driver spent (fuel, toll, food; charged to the truck). Driver expenses: trip allowance (a cost) and personal loans (not a cost; owed back in cash or taken off salary). Wages: pay, salary earned, deductions. The summary shows cash held by drivers, collected-not-handed-over, loans outstanding and wages owed; all flow into the four financial statements. Settings moved to the ⚙️ button in the top bar.
   - **Work** tab (the old Trips): six types of work — trip, load by volume (m³), load by weight (tonnes), and rent by the hour, day or month. Hours come from the hour meter, days from the start and end dates; rent entries record who pays the fuel. Each entry has truck or machine, driver or operator, customer, place, material, ticket number and a pay-on-the-spot option; filter by truck, customer or invoiced/not invoiced; income by type of work in the income statement; print or export to CSV
   - **Fuel, repairs and bills**: add fuel (with litres and odometer), repairs/service, spare parts, tyres, insurance and other costs to a truck; paid now (posts a cash-out entry in a linked book) or on credit (a supplier bill with part payments and a "who you owe" list)
   - **Customers and invoices**: an invoice takes a customer's trips that are not invoiced yet, tracks Draft → Sent → Paid, records payments received (into a linked book), prints on A4 and exports to Excel with live formulas; per-customer balances and statements
@@ -51,13 +52,13 @@ The APK is built automatically by GitHub Actions.
 2. Download the **TruckBook-apk** artifact (a zip containing `TruckBook.apk`)
 3. Unzip it on your phone and open `TruckBook.apk`; allow "Install unknown apps" if Android asks
 
-To publish a downloadable release, push a tag such as `v1.4`: the workflow attaches `TruckBook.apk` to that release. You can also run a build manually from the Actions tab.
+To publish a downloadable release, push a tag such as `v1.5`: the workflow attaches `TruckBook.apk` to that release. You can also run a build manually from the Actions tab.
 
 ### Updating
 
 Builds are signed with a fixed key (`app/truckbook.keystore`), so a new APK installs over the old one and keeps your data. This key is public in the repo on purpose: it is for sideloading your own build only, not for app stores.
 
-> Updating from 1.1 or 1.2 to 1.4 keeps all your data. Versions before 1.1 were signed with a throwaway key. To move from one of those, **export your data first** (Settings → Export this book, per book), uninstall the old app, install 1.1, then use **Restore from file** to import the CSV.
+> Updating from 1.1 or 1.2 to 1.5 keeps all your data. Versions before 1.1 were signed with a throwaway key. To move from one of those, **export your data first** (Settings → Export this book, per book), uninstall the old app, install 1.1, then use **Restore from file** to import the CSV.
 
 ## Camera and calculator (2.12)
 

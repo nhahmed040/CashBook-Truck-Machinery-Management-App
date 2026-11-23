@@ -1223,6 +1223,7 @@
     inp.focus();
   }
   $('searchBtn').addEventListener('click', openSearch);
+  $('settingsBtn').addEventListener('click', function () { buzz(); showView('settings'); });
 
   /* ---------- quick add: tap a recent category ---------- */
   function renderCatChips() {
@@ -1858,7 +1859,7 @@
     });
   }
 
-  function receiveInvoice(p, inv) {
+  function receiveInvoice(p, inv, byDriver) {
     var c = L.invoiceCalc(p, inv);
     var books = linkedBookOptions(p, true);
     openForm({
@@ -1866,7 +1867,7 @@
       fields: [
         { key: 'date', label: t('payment_date'), type: 'date', value: L.todayStr(), required: true },
         { key: 'amount', label: t('pay_amount'), type: 'number', min: 0.01, value: c.balance, required: true },
-        { key: 'by', label: t('received_by'), type: 'select', options: [{ value: '', label: t('received_by_me') }].concat(p.workers.map(function (w) { return { value: String(w.id), label: w.name + ' (' + t('driver_holds') + ')' }; })), value: '' },
+        { key: 'by', label: t('received_by'), type: 'select', options: [{ value: '', label: t('received_by_me') }].concat(p.workers.map(function (w) { return { value: String(w.id), label: w.name + ' (' + t('driver_holds') + ')' }; })), value: byDriver ? String(byDriver) : '' },
         { key: 'bookId', label: t('record_in_book'), type: 'select', options: books, value: books.length > 1 ? books[1].value : '', showFor: { key: 'by', values: [''] } }
       ],
       onSubmit: function (v) {
@@ -2161,7 +2162,7 @@
 
 
   /* --- cash in / cash out of trucks and drivers --- */
-  var DRIVER_KINDS = ['advance', 'spent', 'return', 'handover', 'salary', 'pay', 'deduct'];
+  var DRIVER_KINDS = ['advance', 'spent', 'return', 'handover', 'allowance', 'loan', 'repay', 'loanded', 'salary', 'pay', 'deduct'];
   function cashLabel(k) { return t('ck_' + k); }
   function driverName(p, id) { var w = byId(p.workers, id); return w ? w.name : '—'; }
   function secCash(body, p) {
@@ -2255,27 +2256,43 @@
     tot.appendChild(kv(t('cash_net'), money(L.round2(tin - tout)), tin - tout < 0 ? 'neg' : 'pos', 'total'));
     body.appendChild(tot);
   }
-  function cashDriversTab(body, p) {
-    if (!p.workers.length) { body.appendChild(el('p', 'empty', t('no_drivers_cash'))); return; }
+  function collectFor(p, w) {
+    var open = p.invoices.filter(function (inv) { return L.invoiceCalc(p, inv).balance > 0.004; });
+    if (!open.length) { toast(t('drv_no_open_inv')); return; }
+    if (open.length === 1) { receiveInvoice(p, open[0], w.id); return; }
+    openForm({
+      title: t('drv_collect') + ': ' + w.name,
+      fields: [{ key: 'inv', label: t('drv_pick_invoice'), type: 'select', value: String(open[0].id),
+        options: open.map(function (inv) { return { value: String(inv.id), label: (inv.no || '') + ' · ' + (inv.customer || '') + ' · ' + money(L.invoiceCalc(p, inv).balance) }; }) }],
+      onSubmit: function (v) {
+        var inv = byId(p.invoices, Number(v.inv));
+        if (!inv) return t('required');
+        setTimeout(function () { receiveInvoice(p, inv, w.id); }, 50);
+        return null;
+      }
+    });
+  }
+  function driverCards(body, p) {
+    if (!p.workers.length) { body.appendChild(el('p', 'empty', t('drv_none'))); return; }
     p.workers.forEach(function (w) {
       var ac = L.driverAccount(p, w.id), card = panel(null);
+      function act(kind, cls, amount) { return btn(t('ck_' + kind + '_short'), cls || '', function () { editCash(p, null, { kind: kind, driver: w.id, truck: w.truck, amount: amount || '' }); }); }
+      function group(title, buttons) { var g = el('div', 'drvgrp'); g.appendChild(el('small', 'muted', title)); var r = el('div', 'btnrow'); buttons.forEach(function (b) { r.appendChild(b); }); g.appendChild(r); card.appendChild(g); }
       card.appendChild(el('h3', null, '👤 ' + w.name + (w.truck ? ' · ' + L.truckName(p, w.truck) : '')));
       if (ac.collected > 0) card.appendChild(kv(t('collected_from_customers'), money(ac.collected)));
       card.appendChild(kv(t('held_by_driver'), money(ac.held), ac.held < 0 ? 'neg' : ''));
+      if (ac.loanOut > 0) card.appendChild(kv(t('loan_owed'), money(ac.loanOut), 'neg'));
       card.appendChild(kv(t('wages_owed'), money(ac.owed)));
       if (ac.attendance > 0) card.appendChild(el('div', 'muted small', t('incl_attendance', { n: money(L.round2(ac.attendance)) })));
       card.appendChild(kv(ac.net >= 0 ? t('owner_owes') : t('driver_owes'), money(Math.abs(ac.net)), ac.net > 0 ? 'neg' : ac.net < 0 ? 'pos' : '', 'total'));
-      var row = el('div', 'btnrow');
-      row.appendChild(btn(t('ck_advance_short'), 'primary', function () { editCash(p, null, { kind: 'advance', driver: w.id, truck: w.truck }); }));
-      row.appendChild(btn(t('ck_spent_short'), '', function () { editCash(p, null, { kind: 'spent', driver: w.id, truck: w.truck }); }));
-      row.appendChild(btn(t('ck_return_short'), '', function () { editCash(p, null, { kind: 'return', driver: w.id, truck: w.truck }); }));
-      row.appendChild(btn(t('ck_handover_short'), ac.collected > 0 ? 'primary' : '', function () { editCash(p, null, { kind: 'handover', driver: w.id, truck: w.truck, amount: ac.held > 0 ? ac.held : '' }); }));
-      row.appendChild(btn(t('ck_pay_short'), '', function () { editCash(p, null, { kind: 'pay', driver: w.id, truck: w.truck }); }));
-      row.appendChild(btn(t('ck_deduct_short'), '', function () { editCash(p, null, { kind: 'deduct', driver: w.id, truck: w.truck }); }));
-      row.appendChild(btn(t('ck_salary_short'), '', function () { editCash(p, null, { kind: 'salary', driver: w.id, truck: w.truck }); }));
-      card.appendChild(row);
+      group(t('drv_in'), [
+        btn(t('drv_collect'), ac.collected > 0 ? '' : 'primary', function () { collectFor(p, w); }),
+        act('handover', ac.collected > 0 ? 'primary' : '', ac.held > 0 ? ac.held : ''), act('return'), act('repay')]);
+      group(t('drv_truck_exp'), [act('advance', 'primary'), act('spent')]);
+      group(t('drv_driver_exp'), [act('allowance'), act('loan')]);
+      group(t('wages_owed'), [act('pay'), act('salary'), act('deduct'), act('loanded')]);
       var open = ui.cashDriver === w.id;
-      card.appendChild(btn(open ? t('hide_ledger') : t('show_ledger') + ' (' + ac.entries.length + ')', 'block', function () { ui.cashDriver = open ? 0 : w.id; renderProjects(); }));
+      card.appendChild(btn(open ? t('hide_ledger') : t('show_ledger') + ' (' + ac.entries.length + ')', 'block', function () { ui.cashDriver = open ? 0 : w.id; renderProjects(); renderDrivers(); }));
       body.appendChild(card);
       if (open) ac.entries.forEach(function (c) {
         var r = el('button', 'remrow');
@@ -2290,6 +2307,32 @@
       });
     });
   }
+  function cashDriversTab(body, p) { driverCards(body, p); }
+  function renderDrivers() {
+    var box = $('driversBox');
+    if (!box) return;
+    box.textContent = '';
+    var p = workFleet();
+    if (!p) { box.appendChild(el('p', 'empty', t('drv_need_fleet'))); box.appendChild(btn(t('new_project'), 'primary block', function () { showView('projects'); newProject(); })); return; }
+    if (state.projects.length > 1) {
+      var lab = el('label', 'field'), sl = document.createElement('select');
+      lab.appendChild(el('span', null, t('drv_fleet')));
+      state.projects.forEach(function (x) { sl.appendChild(option(String(x.id), x.name)); });
+      sl.value = String(p.id);
+      sl.addEventListener('change', function () { ui.workFleetId = Number(sl.value); renderDrivers(); renderWork(); });
+      lab.appendChild(sl);
+      var fp = panel(null); fp.appendChild(lab); box.appendChild(fp);
+    }
+    var held = 0, pending = 0, loans = 0, wages = 0;
+    p.workers.forEach(function (w) { var a = L.driverAccount(p, w.id); held += a.held; pending += a.collected - a.handed > 0 ? a.collected - a.handed : 0; loans += a.loanOut; wages += a.owed; });
+    var sm = panel(t('drv_tab'));
+    sm.appendChild(kv(t('drv_total_held'), money(L.round2(held))));
+    sm.appendChild(kv(t('drv_total_pending'), money(L.round2(pending))));
+    sm.appendChild(kv(t('drv_total_loans'), money(L.round2(loans)), loans > 0 ? 'neg' : ''));
+    sm.appendChild(kv(t('drv_total_wages'), money(L.round2(wages))));
+    box.appendChild(sm);
+    driverCards(box, p);
+  }
 
   function editCash(p, c, preset) {
     var isNew = !c;
@@ -2297,7 +2340,7 @@
     var x = c || { date: L.todayStr(), kind: preset.kind || 'advance', truck: preset.truck || 0, driver: preset.driver || 0, amount: preset.amount || '', code: 'fuel', note: '' };
     var books = linkedBookOptions(p, true);
     var codeOpts = L.CODES.filter(function (k) { return k !== 'driver'; }).map(function (k) { return { value: k, label: codeLabel(k) }; });
-    var moveKinds = ['advance', 'return', 'handover', 'pay', 'in', 'out'];
+    var moveKinds = ['advance', 'return', 'handover', 'allowance', 'loan', 'repay', 'pay', 'in', 'out'];
     openForm({
       title: isNew ? t('add_cash') : t('edit_cash'),
       fields: [
@@ -2398,6 +2441,7 @@
     renderEntries();
     renderProjects();
     renderWork();
+    renderDrivers();
     renderContacts();
     renderReports();
     renderSettings();
@@ -2407,14 +2451,14 @@
     if (window.__renderCloud) window.__renderCloud();
   }
 
-  var VIEWS = ['entries', 'contacts', 'work', 'projects', 'reports', 'settings'];
+  var VIEWS = ['entries', 'contacts', 'work', 'drivers', 'projects', 'reports', 'settings'];
   function showView(name) {
     ui.view = name;
     VIEWS.forEach(function (v) { $('view-' + v).hidden = v !== name; });
     Array.prototype.forEach.call(document.querySelectorAll('.tabs button'), function (b) {
       b.classList.toggle('active', b.getAttribute('data-view') === name);
     });
-    document.body.classList.remove('view-entries', 'view-contacts', 'view-work', 'view-projects', 'view-reports', 'view-settings');
+    document.body.classList.remove('view-entries', 'view-contacts', 'view-work', 'view-drivers', 'view-projects', 'view-reports', 'view-settings');
     document.body.classList.add('view-' + name);
     applyEntriesScreen();
     window.scrollTo(0, 0);
@@ -2533,6 +2577,12 @@
       if (!p) { newProject(); return; }
       ({ overview: function () { editTrip(p, null); }, trucks: function () { editTruck(p, null); }, costs: function () { editBill(p, null); },
          customers: function () { newInvoiceFlow(p); }, drivers: function () { editWorker(p, null); }, cash: function () { editCash(p, null, {}); }, books: function () { linkBookForm(p); } })[ui.section]();
+      return;
+    }
+    if (ui.view === 'drivers') {
+      var df = workFleet();
+      if (!df) { newProject(); return; }
+      editCash(df, null, {});
       return;
     }
     if (ui.view === 'work') {
@@ -2988,6 +3038,7 @@
       showView(v);
       if (v === 'reports') renderReports();
       if (v === 'projects') renderProjects();
+      if (v === 'drivers') renderDrivers();
       if (v === 'contacts') renderContacts();
     });
   });
@@ -3039,7 +3090,7 @@
   $('closeBook').addEventListener('click', function () { closeModal('bookModal'); });
 
   /* About */
-  var APP_VERSION = '1.4.0', APP_BUILD = 6;
+  var APP_VERSION = '1.5.0', APP_BUILD = 7;
   $('aboutBtn').addEventListener('click', function () { $('aboutVersion').textContent = APP_VERSION + ' (build ' + APP_BUILD + ')'; openModal('aboutModal'); });
   $('aboutBackup').addEventListener('click', function () { closeModal('aboutModal'); var b = $('backupBtn'); b.scrollIntoView({ block: 'center' }); b.click(); });
   $('closeAbout').addEventListener('click', function () { closeModal('aboutModal'); });

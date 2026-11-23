@@ -275,10 +275,11 @@
 
   /* Cash movements of trucks and drivers.
      advance = trip money given to a driver, spent = what the driver spent from it (a truck cost), return = change given back,
-     salary = wage earned (adds to what is owed to the driver), pay = wage paid, deduct = fine or loan taken off,
+     allowance = trip allowance / food paid to a driver (a truck cost), loan = personal advance to a driver (not a cost; he owes it back),
+     repay = loan paid back in cash, loanded = loan taken off his salary, salary = wage earned (adds to what is owed to the driver), pay = wage paid, deduct = fine or loan taken off,
      in / out = any other cash in or out of a truck. */
-  var CASH_KINDS = ['advance', 'spent', 'return', 'handover', 'salary', 'pay', 'deduct', 'in', 'out'];
-  var CASH_MOVES = { advance: 'out', return: 'in', handover: 'in', pay: 'out', 'in': 'in', out: 'out' }; // kinds that move money in/out of the cash box
+  var CASH_KINDS = ['advance', 'spent', 'return', 'handover', 'allowance', 'loan', 'repay', 'loanded', 'salary', 'pay', 'deduct', 'in', 'out'];
+  var CASH_MOVES = { advance: 'out', return: 'in', handover: 'in', allowance: 'out', loan: 'out', repay: 'in', pay: 'out', 'in': 'in', out: 'out' }; // kinds that move money in/out of the cash box
   function sanitizeCash(c) {
     if (!c || typeof c !== 'object' || CASH_KINDS.indexOf(c.kind) < 0) return null;
     var a = Number(c.amount);
@@ -290,7 +291,7 @@
       truck: validId(c.truck) ? c.truck : 0,
       driver: validId(c.driver) ? c.driver : 0,
       amount: round2(a),
-      code: c.kind === 'pay' ? 'driver' : (c.kind === 'spent' || c.kind === 'out') ? fixCode(c.code, 'other') : '',
+      code: (c.kind === 'pay' || c.kind === 'allowance') ? 'driver' : (c.kind === 'spent' || c.kind === 'out') ? fixCode(c.code, 'other') : '',
       note: str(c.note, 80),
       entryId: validId(c.entryId) ? c.entryId : 0,
       bookId: str(c.bookId, 40)
@@ -872,7 +873,7 @@
     });
     // driver spending, wages paid and other cash out of a truck (advances are not a cost until the driver spends them)
     (p.cash || []).forEach(function (c) {
-      if (c.kind === 'spent' || c.kind === 'pay' || c.kind === 'out') items.push({ code: c.code || 'other', truck: c.truck, amount: c.amount, litres: 0, date: c.date });
+      if (c.kind === 'spent' || c.kind === 'pay' || c.kind === 'allowance' || c.kind === 'out') items.push({ code: c.code || 'other', truck: c.truck, amount: c.amount, litres: 0, date: c.date });
     });
     return items;
   }
@@ -881,7 +882,7 @@
   /* A driver's cash account. held = trip money with the driver; owed = wages the owner owes (salary + unpaid attendance - paid - deductions).
      net > 0: the owner owes the driver;  net < 0: the driver owes the owner. */
   function driverAccount(p, workerId) {
-    var a = { advance: 0, spent: 0, returned: 0, handed: 0, collected: 0, salary: 0, pay: 0, deduct: 0, attendance: 0, entries: [] };
+    var a = { advance: 0, spent: 0, returned: 0, handed: 0, collected: 0, salary: 0, pay: 0, deduct: 0, allowance: 0, loan: 0, repay: 0, loanded: 0, attendance: 0, entries: [] };
     (p.cash || []).forEach(function (c) {
       if (c.driver !== workerId) return;
       a.entries.push(c);
@@ -892,13 +893,18 @@
       else if (c.kind === 'salary') a.salary += c.amount;
       else if (c.kind === 'pay') a.pay += c.amount;
       else if (c.kind === 'deduct') a.deduct += c.amount;
+      else if (c.kind === 'allowance') a.allowance += c.amount;
+      else if (c.kind === 'loan') a.loan += c.amount;
+      else if (c.kind === 'repay') a.repay += c.amount;
+      else if (c.kind === 'loanded') a.loanded += c.amount;
     });
     p.invoices.forEach(function (inv) { inv.receipts.forEach(function (r) { if (r.driver === workerId) a.collected += r.amount; }); });
     a.collected = round2(a.collected);
     a.attendance = sum(p.attendance.filter(function (x) { return x.workerId === workerId && !x.paid; }), function (x) { return x.days * x.rate; });
     a.held = round2(a.advance + a.collected - a.spent - a.returned - a.handed);
-    a.owed = round2(a.salary + a.attendance - a.pay - a.deduct);
-    a.net = round2(a.owed - a.held);
+    a.owed = round2(a.salary + a.attendance - a.pay - a.deduct - a.loanded);
+    a.loanOut = Math.max(0, round2(a.loan - a.repay - a.loanded));
+    a.net = round2(a.owed - a.held - a.loanOut);
     a.entries.sort(function (x, y) { return x.date < y.date ? 1 : x.date > y.date ? -1 : y.id - x.id; });
     return a;
   }
@@ -979,16 +985,25 @@
   }
   function inRange(d, from, to) { return (!from || d >= from) && (!to || d <= to); }
   /* what the owner owes one driver in wages at a date: salary earned + unpaid work days - wages paid - deductions (never below 0) */
-  function wagesOwedAt(p, workerId, asOf) {
+  function wagesOwedAt(p, workerId, asOf, noLoan) {
     var o = 0;
     (p.cash || []).forEach(function (c) {
       if (c.driver !== workerId || c.date > asOf) return;
-      if (c.kind === 'salary') o += c.amount; else if (c.kind === 'pay' || c.kind === 'deduct') o -= c.amount;
+      if (c.kind === 'salary') o += c.amount; else if (c.kind === 'pay' || c.kind === 'deduct' || (c.kind === 'loanded' && !noLoan)) o -= c.amount;
     });
     p.attendance.forEach(function (x) { if (x.workerId === workerId && !x.paid && x.date <= asOf) o += x.days * x.rate; });
     return Math.max(0, round2(o));
   }
-  function allWagesOwedAt(p, asOf) { return round2(sum(p.workers, function (w) { return wagesOwedAt(p, w.id, asOf); })); }
+  function allWagesOwedAt(p, asOf, noLoan) { return round2(sum(p.workers, function (w) { return wagesOwedAt(p, w.id, asOf, noLoan); })); }
+  /* loan still owed by a driver at a date */
+  function loanOutAt(p, workerId, asOf) {
+    var o = 0;
+    (p.cash || []).forEach(function (c) {
+      if (c.driver !== workerId || c.date > asOf) return;
+      if (c.kind === 'loan') o += c.amount; else if (c.kind === 'repay' || c.kind === 'loanded') o -= c.amount;
+    });
+    return Math.max(0, round2(o));
+  }
   /* Profit and loss for a period: trips by trip date, costs by bill / payment date. */
   function incomeStatement(state, p, from, to) {
     var trips = p.trips.filter(function (x) { return inRange(x.date, from, to); });
@@ -1000,7 +1015,7 @@
     items.forEach(function (c) { cost += c.amount; byCode[c.code] = (byCode[c.code] || 0) + c.amount; tr(c.truck).cost += c.amount; });
     var rows;
     // wages earned in the period but not yet paid (wages that are paid already count as costs above)
-    var accrual = round2(allWagesOwedAt(p, to || '9999-12-31') - (from ? allWagesOwedAt(p, addDaysStr(from, -1)) : 0));
+    var accrual = round2(allWagesOwedAt(p, to || '9999-12-31', true) - (from ? allWagesOwedAt(p, addDaysStr(from, -1), true) : 0));
     if (accrual) { cost += accrual; byCode.wages_accrued = accrual; tr(0).cost += accrual; }
     rows = Object.keys(byTruck).map(function (k) { var r = byTruck[k]; r.revenue = round2(r.revenue); r.cost = round2(r.cost); r.profit = round2(r.revenue - r.cost); return r; })
       .sort(function (a, b) { return (a.truck === 0) - (b.truck === 0) || b.profit - a.profit; });
@@ -1021,7 +1036,7 @@
     });
     p.invoices.forEach(function (inv) { inv.receipts.forEach(function (r) { if (r.driver && inRange(r.date, from, to)) collected += r.amount; }); });
     function list(m, order) { return order.filter(function (k) { return m[k] > 0; }).map(function (k) { return { kind: k, amount: round2(m[k]) }; }); }
-    var inRows = list(ins, ['receipt', 'handover', 'return', 'in']), outRows = list(outs, ['bill', 'advance', 'pay', 'out']);
+    var inRows = list(ins, ['receipt', 'handover', 'return', 'repay', 'in']), outRows = list(outs, ['bill', 'advance', 'allowance', 'loan', 'pay', 'out']);
     var tin = round2(sum(inRows, function (r) { return r.amount; })), tout = round2(sum(outRows, function (r) { return r.amount; }));
     opening = round2(opening);
     return { from: from, to: to, opening: opening, inRows: inRows, outRows: outRows, totalIn: tin, totalOut: tout, net: round2(tin - tout), closing: round2(opening + tin - tout),
@@ -1031,7 +1046,7 @@
   function balanceSheet(state, p, asOf) {
     var cash = 0;
     cashLines(state, p).forEach(function (l) { if (l.date <= asOf) cash += l.dir === 'in' ? l.amount : -l.amount; });
-    var held = 0, reimburse = 0, wagesOwed = 0, drivers = [];
+    var held = 0, reimburse = 0, wagesOwed = 0, loans = 0, drivers = [];
     p.workers.forEach(function (w) {
       var h = 0;
       (p.cash || []).forEach(function (c) {
@@ -1041,10 +1056,10 @@
       });
       p.invoices.forEach(function (inv) { inv.receipts.forEach(function (r) { if (r.driver === w.id && r.date <= asOf) h += r.amount; }); });
       h = round2(h);
-      var owed = wagesOwedAt(p, w.id, asOf);
+      var owed = wagesOwedAt(p, w.id, asOf), ln = loanOutAt(p, w.id, asOf);
       if (h > 0) held += h; else reimburse -= h;
-      wagesOwed += owed;
-      if (h || owed) drivers.push({ id: w.id, name: w.name, held: h, owed: owed });
+      wagesOwed += owed; loans += ln;
+      if (h || owed || ln) drivers.push({ id: w.id, name: w.name, held: h, owed: owed, loan: ln });
     });
     var receivables = 0, unbilled = 0, payables = 0, invDate = {};
     p.invoices.forEach(function (inv) {
@@ -1060,7 +1075,7 @@
       var paid = sum(b.payments.filter(function (x) { return x.date <= asOf; }), function (x) { return x.amount; });
       payables += Math.max(0, b.amount - paid);
     });
-    var A = [['cash', cash], ['held', held], ['receivables', receivables], ['unbilled', unbilled]].map(function (x) { return { key: x[0], amount: round2(x[1]) }; });
+    var A = [['cash', cash], ['held', held], ['loans', loans], ['receivables', receivables], ['unbilled', unbilled]].map(function (x) { return { key: x[0], amount: round2(x[1]) }; });
     var Lb = [['payables', payables], ['wagesOwed', wagesOwed], ['reimburse', reimburse]].map(function (x) { return { key: x[0], amount: round2(x[1]) }; });
     var ta = round2(sum(A, function (x) { return x.amount; })), tl = round2(sum(Lb, function (x) { return x.amount; }));
     return { asOf: asOf, assets: A, liabilities: Lb, totalAssets: ta, totalLiabilities: tl, equity: round2(ta - tl), drivers: drivers };

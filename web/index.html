@@ -22,6 +22,7 @@
   <header class="top">
     <h1>TruckBook</h1>
     <div class="bookbar">
+      <button type="button" id="settingsBtn" class="icon" aria-label="Settings" title="Settings">⚙️</button>
       <button type="button" id="searchBtn" class="icon" aria-label="Search" title="Search">🔍</button>
       <button type="button" id="syncDot" class="sync" aria-label="Sync" hidden></button>
       <select id="bizSelect" aria-label="Business" hidden></select>
@@ -120,6 +121,11 @@
     <!-- WORK ENTRIES -->
     <section id="view-work" class="view" hidden>
       <div id="workBox"></div>
+    </section>
+
+    <!-- DRIVER ACCOUNT -->
+    <section id="view-drivers" class="view" hidden>
+      <div id="driversBox"></div>
     </section>
 
     <!-- PROJECTS -->
@@ -227,9 +233,9 @@
   <nav class="tabs">
     <button type="button" data-view="entries" class="active"><span>📒</span><b data-i18n="entries">Entries</b></button>
     <button type="button" data-view="work"><span>🛠️</span><b data-i18n="work_tab">Work</b></button>
+    <button type="button" data-view="drivers"><span>👤</span><b data-i18n="drv_tab">Driver Account</b></button>
     <button type="button" data-view="projects"><span>🚛</span><b data-i18n="projects">Trucks</b></button>
     <button type="button" data-view="reports"><span>📊</span><b data-i18n="reports">Reports</b></button>
-    <button type="button" data-view="settings"><span>⚙️</span><b data-i18n="settings">Settings</b></button>
   </nav>
 
   <!-- Entry add / edit -->
