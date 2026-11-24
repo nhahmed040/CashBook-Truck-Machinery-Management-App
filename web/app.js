@@ -314,6 +314,7 @@
       ids = ids.concat(p.photos);
       p.bills.forEach(function (b) { ids = ids.concat(b.photos); });
       p.trucks.forEach(function (x) { ids = ids.concat(x.photos); });
+      (p.cash || []).forEach(function (c) { ids = ids.concat(c.photos || []); });
     });
     ids = ids.concat(L.trashPhotoIds(state.trash));
     return ids.filter(function (id, i) { return ids.indexOf(id) === i; });
@@ -345,7 +346,7 @@
   function allPhotoIdsNoTrash() {
     var ids = [];
     state.books.forEach(function (b) { ids = ids.concat(entryPhotoIds(b.entries)); });
-    state.projects.forEach(function (p) { ids = ids.concat(p.photos); p.bills.forEach(function (b) { ids = ids.concat(b.photos); }); p.trucks.forEach(function (x) { ids = ids.concat(x.photos); }); });
+    state.projects.forEach(function (p) { ids = ids.concat(p.photos); p.bills.forEach(function (b) { ids = ids.concat(b.photos); }); p.trucks.forEach(function (x) { ids = ids.concat(x.photos); }); (p.cash || []).forEach(function (c) { ids = ids.concat(c.photos || []); }); });
     return ids;
   }
   /* returns true when the item is back; the caller saves and redraws */
@@ -2413,6 +2414,7 @@
       group(t('drv_truck_exp'), [act('advance', 'primary'), act('spent')]);
       group(t('drv_driver_exp'), [act('allowance'), act('loan')]);
       group(t('wages_owed'), [act('pay'), act('salary'), act('deduct'), act('loanded')]);
+      card.appendChild(btn(t('drv_stmt'), 'block', function () { openDriverStatement(p, w); }));
       var open = ui.cashDriver === w.id;
       card.appendChild(btn(open ? t('hide_ledger') : t('show_ledger') + ' (' + ac.entries.length + ')', 'block', function () { ui.cashDriver = open ? 0 : w.id; renderProjects(); renderDrivers(); }));
       body.appendChild(card);
@@ -2420,7 +2422,7 @@
         var r = el('button', 'remrow');
         r.type = 'button';
         var tx = el('span', 'stext');
-        tx.appendChild(el('b', null, fmtDate(c.date) + ' · ' + cashLabel(c.kind)));
+        tx.appendChild(el('b', null, fmtDate(c.date) + ' · ' + cashLabel(c.kind) + (c.photos && c.photos.length ? ' 📎' : '')));
         tx.appendChild(el('small', 'muted', [c.truck ? L.truckName(p, c.truck) : '', c.code && c.kind === 'spent' ? codeLabel(c.code) : '', c.kind === 'count' ? t('count_line', { exp: money(c.expected) }) : '', c.note].filter(Boolean).join(' · ')));
         r.appendChild(tx);
         r.appendChild(el('span', 'amt', money(c.amount)));
@@ -2459,6 +2461,24 @@
         toast(Math.abs(diff) < 0.005 ? t('count_match') : diff < 0 ? t('count_short', { n: money(-diff) }) : t('count_over', { n: money(diff) }));
         return null;
       }
+    });
+  }
+  function openDriverStatement(p, w) {
+    var ac = L.driverAccount(p, w.id), rows = L.driverStatement(p, w.id), today = L.todayStr();
+    var head = [{ h: t('date') }, { h: t('description') }, { h: t('amount'), n: 1 }, { h: t('stmt_held_after'), n: 1 }];
+    function label(r) { return [r.kind === 'collected' ? t('collected_from_customers') : cashLabel(r.kind), r.truck ? L.truckName(p, r.truck) : '', r.text].filter(Boolean).join(' · '); }
+    var trs = rows.map(function (r) { return [fmtDate(r.date), label(r), money(r.amount), money(r.heldAfter)]; });
+    var totals = [[t('held_by_driver'), money(ac.held), ac.held < 0 ? 'neg' : '']];
+    if (ac.loanOut > 0) totals.push([t('loan_owed'), money(ac.loanOut), 'neg']);
+    totals.push([t('wages_owed'), money(ac.owed)]);
+    totals.push([ac.net >= 0 ? t('owner_owes') : t('driver_owes'), money(Math.abs(ac.net)), 'total']);
+    statementModal({
+      title: t('drv_stmt') + ': ' + w.name, sub: p.name + ' · ' + fmtDate(today),
+      rows: rows.map(function (r) { return { a: label(r), b: fmtDate(r.date) + ' · ' + t('stmt_held_after') + ' ' + money(r.heldAfter), c: money(r.amount), cls: r.held < 0 ? 'pos' : r.held > 0 ? 'neg' : '' }; }),
+      totals: totals,
+      meta: [[t('project'), p.name], [t('driver'), w.name]],
+      blocks: [{ head: head, rows: trs, totals: totals }],
+      csv: [head.map(function (h) { return h.h; })].concat(trs), file: 'driver-' + safeName(w.name)
     });
   }
   function snoozeMap() { try { return JSON.parse(localStorage.getItem('truckbook.snooze') || '{}') || {}; } catch (e) { return {}; } }
@@ -2513,6 +2533,7 @@
     var isNew = !c;
     preset = preset || {};
     var x = c || { date: L.todayStr(), kind: preset.kind || 'advance', truck: preset.truck || 0, driver: preset.driver || 0, amount: preset.amount || '', code: 'fuel', note: '' };
+    var cpst = newPhotoState(c ? c.photos : []);
     var books = linkedBookOptions(p, true);
     var codeOpts = L.CODES.filter(function (k) { return k !== 'driver'; }).map(function (k) { return { value: k, label: codeLabel(k) }; });
     var moveKinds = ['advance', 'return', 'handover', 'allowance', 'loan', 'repay', 'pay', 'in', 'out'];
@@ -2526,13 +2547,14 @@
         { key: 'amount', label: t('amount'), type: 'number', min: 0.01, value: x.amount, required: true },
         { key: 'code', label: t('expense_type'), type: 'select', options: codeOpts, value: x.code && x.code !== 'driver' ? x.code : 'fuel', showFor: { key: 'kind', values: ['spent', 'out'] } },
         { key: 'note', label: t('remark'), type: 'text', value: x.note, max: 80 },
-        { key: 'bookId', label: t('record_in_book'), type: 'select', options: books, value: c ? (c.bookId || '') : (books.length > 1 ? books[1].value : ''), showFor: { key: 'kind', values: moveKinds } }
+        { key: 'bookId', label: t('record_in_book'), type: 'select', options: books, value: c ? (c.bookId || '') : (books.length > 1 ? books[1].value : ''), showFor: { key: 'kind', values: moveKinds } },
+        { key: 'photos', type: 'photos', state: cpst }
       ],
       onSubmit: function (v) {
         var kind = v.kind, did = Number(v.driver) || 0;
         if (DRIVER_KINDS.indexOf(kind) >= 0 && !did) return t('pick_driver');
         var nc = L.sanitizeCash({ id: c ? c.id : 0, date: L.isDate(v.date) ? v.date : L.todayStr(), kind: kind, truck: Number(v.truck) || 0, driver: DRIVER_KINDS.indexOf(kind) >= 0 ? did : 0,
-          amount: v.amount, code: v.code, note: v.note });
+          amount: v.amount, code: v.code, note: v.note, photos: cpst.ids });
         if (!nc) return t('required');
         if (c && c.entryId && c.bookId) removeEntryFromBook(c.bookId, c.entryId);
         var target = moveKinds.indexOf(kind) >= 0 && v.bookId ? bookById(v.bookId) : null;
@@ -2549,7 +2571,7 @@
       onDelete: isNew ? null : function () {
         if (!window.confirm(t('confirm_delete_cash'))) return false;
         if (c.entryId && c.bookId) removeEntryFromBook(c.bookId, c.entryId);
-        trashPut('cash', fmtDate(c.date) + ' ' + cashLabel(c.kind) + ' ' + money(c.amount), c, { projectId: p.id });
+        trashPut('cash', fmtDate(c.date) + ' ' + cashLabel(c.kind) + ' ' + money(c.amount), c, { projectId: p.id }, c.photos);
         p.cash = p.cash.filter(function (a) { return a.id !== c.id; });
         save(); renderAll(); undoToast();
         return true;
@@ -3265,7 +3287,7 @@
   $('closeBook').addEventListener('click', function () { closeModal('bookModal'); });
 
   /* About */
-  var APP_VERSION = '1.8.0', APP_BUILD = 10;
+  var APP_VERSION = '1.9.0', APP_BUILD = 11;
   $('aboutBtn').addEventListener('click', function () { $('aboutVersion').textContent = APP_VERSION + ' (build ' + APP_BUILD + ')'; openModal('aboutModal'); });
   $('aboutBackup').addEventListener('click', function () { closeModal('aboutModal'); var b = $('backupBtn'); b.scrollIntoView({ block: 'center' }); b.click(); });
   $('closeAbout').addEventListener('click', function () { closeModal('aboutModal'); });

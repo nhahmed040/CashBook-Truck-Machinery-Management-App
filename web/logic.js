@@ -356,7 +356,8 @@
       code: (c.kind === 'pay' || c.kind === 'allowance') ? 'driver' : (c.kind === 'spent' || c.kind === 'out') ? fixCode(c.code, 'other') : '',
       note: str(c.note, 80),
       entryId: validId(c.entryId) ? c.entryId : 0,
-      bookId: str(c.bookId, 40)
+      bookId: str(c.bookId, 40),
+      photos: photoIds(c.photos)
     };
   }
 
@@ -442,7 +443,8 @@
   /* put merged records back into p (in place). Returns p. */
   function applyProjectRecords(p, merged) {
     var lists = { trucks: [], trips: [], invoices: [], bills: [], workers: [], attendance: [], cash: [] };
-    var localBills = {}, localTrucks = {};
+    var localBills = {}, localTrucks = {}, localCash = {};
+    (p.cash || []).forEach(function (c) { localCash[c.id] = c; });
     p.bills.forEach(function (b) { localBills[b.id] = b; });
     p.trucks.forEach(function (x) { localTrucks[x.id] = x; });
     Object.keys(merged).forEach(function (k) {
@@ -451,6 +453,7 @@
       var rec = JSON.parse(JSON.stringify(merged[k]));
       if (pre === 'l' && localBills[rec.id]) rec.photos = localBills[rec.id].photos;
       if (pre === 't' && localTrucks[rec.id]) rec.photos = localTrucks[rec.id].photos;
+      if (pre === 'c' && localCash[rec.id]) rec.photos = localCash[rec.id].photos;
       lists[list].push(rec);
     });
     Object.keys(lists).forEach(function (l) { lists[l].sort(function (x, y) { return x.id - y.id; }); });
@@ -1036,6 +1039,24 @@
     });
     lines.sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
     return { opening: round2(open), inn: round2(inn), out: round2(out), closing: round2(open + inn - out), lines: lines };
+  }
+  /* A driver's statement of account: every row that touches him, with the cash he holds after each one. */
+  var HELD_EFFECT = { advance: 1, collected: 1, spent: -1, 'return': -1, handover: -1 };
+  function driverStatement(p, workerId) {
+    var rows = [], seq = 0;
+    (p.cash || []).forEach(function (c) {
+      if (c.driver !== workerId) return;
+      rows.push({ date: c.date, seq: seq++, kind: c.kind, amount: c.amount, truck: c.truck, text: c.note, held: (HELD_EFFECT[c.kind] || 0) * c.amount, expected: c.expected, photos: c.photos || [] });
+    });
+    p.invoices.forEach(function (inv) {
+      inv.receipts.forEach(function (r) {
+        if (r.driver === workerId) rows.push({ date: r.date, seq: seq++, kind: 'collected', amount: r.amount, truck: 0, text: [inv.customer, inv.no].filter(Boolean).join(' '), held: r.amount, photos: [] });
+      });
+    });
+    rows.sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.seq - b.seq; });
+    var run = 0;
+    rows.forEach(function (r) { run = round2(run + r.held); r.heldAfter = run; });
+    return rows;
   }
   /* ---------- needs-attention alerts (starting defaults; every number is a plain constant to tune after the field test) ---------- */
   var ALERT = { holdLimit: 10000, settleDays: 3, handoverDays: 1, idleDays: 3, billDays: 14, fuelAmber: 0.15, fuelRed: 0.25, diffRed: 200, countDays: 7, fuelDays: 14 };
@@ -1649,7 +1670,7 @@
     newId: newId, todayStr: todayStr, isDate: isDate, round2: round2, round3: round3, round6: round6,
     sanitizeEntry: sanitizeEntry, sanitizeState: sanitizeState, defaultState: defaultState, migrateOld: migrateOld,
     sanitizeProject: sanitizeProject, sanitizeBill: sanitizeBill, sanitizeInvoice: sanitizeInvoice, sanitizeTruck: sanitizeTruck, sanitizeTrip: sanitizeTrip,
-    addDaysStr: addDaysStr, alerts: alerts, ALERT: ALERT, responsibleOn: responsibleOn, truckOn: truckOn, sanitizeRelief: sanitizeRelief, trucksNeedingReview: trucksNeedingReview, truckHasHistory: truckHasHistory, truckBook: truckBook, RESP_MODES: RESP_MODES, syncDriverLinks: syncDriverLinks, workerHasRecords: workerHasRecords, sanitizeWorker: sanitizeWorker, sanitizeAttendance: sanitizeAttendance, sanitizePayment: sanitizePayment,
+    addDaysStr: addDaysStr, driverStatement: driverStatement, alerts: alerts, ALERT: ALERT, responsibleOn: responsibleOn, truckOn: truckOn, sanitizeRelief: sanitizeRelief, trucksNeedingReview: trucksNeedingReview, truckHasHistory: truckHasHistory, truckBook: truckBook, RESP_MODES: RESP_MODES, syncDriverLinks: syncDriverLinks, workerHasRecords: workerHasRecords, sanitizeWorker: sanitizeWorker, sanitizeAttendance: sanitizeAttendance, sanitizePayment: sanitizePayment,
     incomeStatement: incomeStatement, cashFlowStatement: cashFlowStatement, balanceSheet: balanceSheet, agingReport: agingReport, AGE_BUCKETS: AGE_BUCKETS, dayDiff: dayDiff,
     capacityFor: capacityFor, fuelReport: fuelReport,
     sanitizeCash: sanitizeCash, CASH_KINDS: CASH_KINDS, CASH_MOVES: CASH_MOVES, driverAccount: driverAccount, cashLines: cashLines, truckCash: truckCash, cashOnHand: cashOnHand, cashCsv: cashCsv,
