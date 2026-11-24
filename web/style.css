@@ -560,3 +560,6 @@ body.view-entries.books-home #bookBtn, body.view-entries.books-home .fab { displ
 
 .drvgrp { margin-top: 10px; }
 .drvgrp > small { display: block; margin-bottom: 4px; font-weight: 600; }
+.respban { border-left: 4px solid #d99a00; }
+.respchip { display: inline-block; margin: 4px 0; padding: 2px 8px; border-radius: 10px; background: #fff3cd; color: #7a5600; font-size: 13px; }
+@media (prefers-color-scheme: dark) { .respchip { background: #4a3a00; color: #ffd966; } }

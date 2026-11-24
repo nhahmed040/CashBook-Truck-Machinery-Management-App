@@ -180,6 +180,9 @@
   function workType(x) { return x.unit === 'm3' ? 'load_m3' : x.unit === 'ton' ? 'load_ton' : x.unit === 'hour' ? 'rent_hour' : x.unit === 'day' ? 'rent_day' : x.unit === 'month' ? 'rent_month' : 'trip'; }
 
   /* A truck of the fleet. The three dates drive the "expires / due" reminders. */
+  /* who is responsible for a truck: its driver, the owner, the hirer's operator, or nobody in particular ('' = not chosen yet) */
+  var RESP_MODES = ['driver', 'owner', 'hired', 'pool'];
+
   function sanitizeTruck(x) {
     if (!x || typeof x !== 'object') return null;
     var plate = str(x.plate, 30);
@@ -190,6 +193,12 @@
       model: str(x.model, 40),
       capacity: str(x.capacity, 20),
       driverId: validId(x.driverId) ? x.driverId : 0,
+      mode: RESP_MODES.indexOf(x.mode) >= 0 ? x.mode : '',
+      kind: x.kind === 'machine' ? 'machine' : 'truck',
+      ownership: x.ownership === 'rented' ? 'rented' : 'own',
+      retired: !!x.retired,
+      retiredDate: isDate(x.retiredDate) ? x.retiredDate : '',
+      openBalance: num(x.openBalance, -1e12),
       insuranceDate: isDate(x.insuranceDate) ? x.insuranceDate : '',
       inspectionDate: isDate(x.inspectionDate) ? x.inspectionDate : '',
       serviceDate: isDate(x.serviceDate) ? x.serviceDate : '',
@@ -273,13 +282,19 @@
     var wById = {};
     workers.forEach(function (w) { wById[w.id] = w; });
     trucks.forEach(function (tk) { if (tk.driverId && !wById[tk.driverId]) tk.driverId = 0; });
+    trucks.forEach(function (tk) {
+      if (tk.retired) return;
+      if (!tk.mode && tk.driverId) tk.mode = 'driver';
+      else if (tk.mode === 'driver' && !tk.driverId) tk.mode = '';
+      else if (tk.mode && tk.mode !== 'driver') tk.driverId = 0;
+    });
     workers.forEach(function (w) {
       var mine = trucks.filter(function (tk) { return tk.driverId === w.id; });
       if (mine.length) {
         if (!mine.some(function (tk) { return tk.id === w.truck; })) w.truck = mine[0].id;
       } else if (w.truck) {
         var tk = trucks.filter(function (q) { return q.id === w.truck; })[0];
-        if (tk && !tk.driverId) tk.driverId = w.id; else w.truck = 0;
+        if (tk && !tk.driverId && (!tk.mode || tk.mode === 'driver')) { tk.driverId = w.id; tk.mode = 'driver'; } else w.truck = 0;
       }
     });
   }
@@ -974,6 +989,32 @@
     return lines;
   }
   /* in / out / net per truck (plus truck 0 for lines without a truck) for a date range. */
+  /* active trucks whose responsible person has not been chosen yet */
+  function trucksNeedingReview(p) { return p.trucks.filter(function (x) { return x.active && !x.retired && !x.mode; }); }
+  /* does anything refer to this truck? (then it is retired, not deleted) */
+  function truckHasHistory(state, p, id) {
+    return p.trips.some(function (x) { return x.truck === id; }) ||
+      p.bills.some(function (b) { return b.truck === id; }) ||
+      (p.cash || []).some(function (c) { return c.truck === id; }) ||
+      projectBooks(state, p.id).some(function (bk) { return bk.entries.some(function (e) { return e.truck === id; }); });
+  }
+  /* One truck's own cash book: opening + money in - money out = closing, for any period.
+     Built from the same rows as the driver accounts, so nothing is copied or counted twice. */
+  function truckBook(state, p, truckId, from, to) {
+    var tk = p.trucks.filter(function (x) { return x.id === truckId; })[0];
+    var open = tk ? tk.openBalance : 0, inn = 0, out = 0, lines = [];
+    cashLines(state, p).forEach(function (l) {
+      var tid = p.trucks.some(function (x) { return x.id === l.truck; }) ? l.truck : 0;
+      if (tid !== truckId) return;
+      var delta = l.dir === 'in' ? l.amount : -l.amount;
+      if (from && l.date < from) { open += delta; return; }
+      if (to && l.date > to) return;
+      if (l.dir === 'in') inn += l.amount; else out += l.amount;
+      lines.push(l);
+    });
+    lines.sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
+    return { opening: round2(open), inn: round2(inn), out: round2(out), closing: round2(open + inn - out), lines: lines };
+  }
   function truckCash(state, p, from, to) {
     var rows = {}, order = [];
     function row(id) { return rows[id] || (rows[id] = { truck: id, inn: 0, out: 0, net: 0 }); }
@@ -1529,7 +1570,7 @@
     newId: newId, todayStr: todayStr, isDate: isDate, round2: round2, round3: round3, round6: round6,
     sanitizeEntry: sanitizeEntry, sanitizeState: sanitizeState, defaultState: defaultState, migrateOld: migrateOld,
     sanitizeProject: sanitizeProject, sanitizeBill: sanitizeBill, sanitizeInvoice: sanitizeInvoice, sanitizeTruck: sanitizeTruck, sanitizeTrip: sanitizeTrip,
-    syncDriverLinks: syncDriverLinks, workerHasRecords: workerHasRecords, sanitizeWorker: sanitizeWorker, sanitizeAttendance: sanitizeAttendance, sanitizePayment: sanitizePayment,
+    trucksNeedingReview: trucksNeedingReview, truckHasHistory: truckHasHistory, truckBook: truckBook, RESP_MODES: RESP_MODES, syncDriverLinks: syncDriverLinks, workerHasRecords: workerHasRecords, sanitizeWorker: sanitizeWorker, sanitizeAttendance: sanitizeAttendance, sanitizePayment: sanitizePayment,
     incomeStatement: incomeStatement, cashFlowStatement: cashFlowStatement, balanceSheet: balanceSheet, agingReport: agingReport, AGE_BUCKETS: AGE_BUCKETS, dayDiff: dayDiff,
     capacityFor: capacityFor, fuelReport: fuelReport,
     sanitizeCash: sanitizeCash, CASH_KINDS: CASH_KINDS, CASH_MOVES: CASH_MOVES, driverAccount: driverAccount, cashLines: cashLines, truckCash: truckCash, cashOnHand: cashOnHand, cashCsv: cashCsv,

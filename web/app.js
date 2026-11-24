@@ -621,6 +621,7 @@
     Object.keys(inputs).forEach(function (k) { if (inputs[k].field.type === 'select') inputs[k].input.addEventListener('change', applyShow); });
     applyShow();
     $('formDelete').hidden = !opts.onDelete;
+    $('formDelete').textContent = opts.deleteLabel || t('delete');
     $('formForm').onsubmit = function (ev) {
       ev.preventDefault();
       var values = {};
@@ -998,6 +999,42 @@
     return [agBlock(t('fin_receivables'), ag.receivables), agBlock(t('fin_payables'), ag.payables)];
   }
 
+  function openTruckBook(p, truck) {
+    var today = L.todayStr(), st = { from: today.slice(0, 8) + '01', to: today };
+    var ov = el('div', 'overlay open sheetov'), m = el('div', 'modal importmodal finmodal');
+    function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); }
+    function draw() {
+      m.textContent = '';
+      m.appendChild(el('h2', null, t('tb_title') + ' · ' + truck.plate));
+      var pn = panel(null);
+      [['cash_from', 'from'], ['cash_to', 'to']].forEach(function (x) {
+        var lab = el('label', 'field'), di = document.createElement('input');
+        lab.appendChild(el('span', null, t(x[0])));
+        di.type = 'date'; di.value = st[x[1]];
+        di.addEventListener('change', function () { if (L.isDate(di.value)) { st[x[1]] = di.value; draw(); } });
+        lab.appendChild(di); pn.appendChild(lab);
+      });
+      m.appendChild(pn);
+      var b = L.truckBook(state, p, truck.id, st.from, st.to);
+      m.appendChild(kv(t('tb_opening'), money(b.opening)));
+      m.appendChild(kv(t('tb_in'), money(b.inn), 'pos'));
+      m.appendChild(kv(t('tb_out'), money(b.out), 'neg'));
+      m.appendChild(kv(t('tb_closing'), money(b.closing), b.closing < 0 ? 'neg' : '', 'total'));
+      if (!b.lines.length) m.appendChild(el('p', 'muted small', t('tb_empty')));
+      var wrap = el('div', 'fintblwrap'), tb = el('table', 'fintbl'), tbd = el('tbody');
+      b.lines.forEach(function (l) {
+        var rr = el('tr');
+        [fmtDate(l.date), l.label + (l.driver ? ' · ' + driverName(p, l.driver) : ''), (l.dir === 'in' ? '+' : '−') + money(l.amount)].forEach(function (v, i) { rr.appendChild(el('td', i === 2 ? 'n' : '', v)); });
+        tbd.appendChild(rr);
+      });
+      tb.appendChild(tbd); wrap.appendChild(tb); m.appendChild(wrap);
+      m.appendChild(btn(t('close'), 'block', close));
+    }
+    draw();
+    ov.appendChild(m);
+    ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+    document.body.appendChild(ov);
+  }
   function openFuelHistory(p, truck, f) {
     var ov = el('div', 'overlay open sheetov'), m = el('div', 'modal importmodal finmodal');
     function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); }
@@ -1521,13 +1558,22 @@
     pn.appendChild(btn(t('add_truck'), 'primary block', function () { editTruck(p, null); }));
     body.appendChild(pn);
     if (!p.trucks.length) { body.appendChild(el('p', 'empty', t('no_trucks'))); return; }
+    var review = L.trucksNeedingReview(p);
+    if (review.length) {
+      var bn = panel(null);
+      bn.classList.add('respban');
+      bn.appendChild(el('p', null, '⚠️ ' + t('resp_banner')));
+      review.forEach(function (x) { bn.appendChild(btn(t('resp_banner_btn') + ': ' + x.plate, 'block', function () { editTruck(p, x); })); });
+      body.appendChild(bn);
+    }
     var stats = {};
     L.truckStats(state, p.id).rows.forEach(function (r) { stats[r.truck.id] = r; });
     p.trucks.forEach(function (x) {
       var st = stats[x.id], card = panel(null);
       var dr = byId(p.workers, x.driverId);
-      card.appendChild(el('h3', null, '🚚 ' + x.plate + (x.active ? '' : ' (' + t('inactive') + ')')));
-      card.appendChild(el('div', 'muted small', [x.model, x.capacity, dr ? t('driver') + ': ' + dr.name : ''].filter(Boolean).join(' · ')));
+      card.appendChild(el('h3', null, (x.kind === 'machine' ? '🚜 ' : '🚚 ') + x.plate + (x.retired ? ' (' + t('retired') + ')' : x.active ? '' : ' (' + t('inactive') + ')')));
+      card.appendChild(el('div', 'muted small', [x.model, x.capacity, x.ownership === 'rented' ? t('own_rented') : '', dr ? t('driver') + ': ' + dr.name : x.mode ? t('resp_' + x.mode) : ''].filter(Boolean).join(' · ')));
+      if (!x.mode && !x.retired) card.appendChild(el('div', 'respchip', '⚠️ ' + t('resp_not_chosen')));
       if (x.note) card.appendChild(el('div', 'muted small', x.note));
       if (x.insuranceDate) card.appendChild(dateRow(t('doc_insurance'), x.insuranceDate));
       if (x.inspectionDate) card.appendChild(dateRow(t('doc_inspection'), x.inspectionDate));
@@ -1542,6 +1588,7 @@
       var row = el('div', 'btnrow');
       row.appendChild(btn(t('add_trip'), 'primary', function () { editTrip(p, null, { truck: x.id }); }));
       row.appendChild(btn(t('trips'), '', function () { openWork(p, { truck: x.id, customer: '', billed: '' }); }));
+      row.appendChild(btn(t('tb_btn'), '', function () { openTruckBook(p, x); }));
       row.appendChild(btn(t('edit_truck'), '', function () { editTruck(p, x); }));
       card.appendChild(row);
       body.appendChild(card);
@@ -1550,15 +1597,23 @@
 
   function editTruck(p, x) {
     var isNew = !x;
-    var v0 = x || { plate: '', model: '', capacity: '', driverId: 0, insuranceDate: '', inspectionDate: '', serviceDate: '', active: true, note: '' };
+    var v0 = x || { plate: '', model: '', capacity: '', driverId: 0, mode: '', kind: 'truck', ownership: 'own', openBalance: 0, insuranceDate: '', inspectionDate: '', serviceDate: '', active: true, note: '' };
     var pst = newPhotoState(x ? x.photos : []);
+    var hasHist = !isNew && L.truckHasHistory(state, p, x.id);
     openForm({
       title: isNew ? t('add_truck') : t('edit_truck'),
       fields: [
         { key: 'plate', label: t('plate'), type: 'text', value: v0.plate, max: 30, required: true },
         { key: 'model', label: t('truck_model'), type: 'text', value: v0.model, max: 40 },
         { key: 'capacity', label: t('capacity'), type: 'text', value: v0.capacity, max: 20, ph: '12 m³' },
-        { key: 'driver', label: t('driver'), type: 'select', options: workerOptions(p), value: v0.driverId ? String(v0.driverId) : '' },
+        { key: 'kind', label: t('kind_label'), type: 'select', options: [{ value: 'truck', label: t('kind_truck') }, { value: 'machine', label: t('kind_machine') }], value: v0.kind },
+        { key: 'ownership', label: t('own_label'), type: 'select', options: [{ value: 'own', label: t('own_own') }, { value: 'rented', label: t('own_rented') }], value: v0.ownership },
+        { key: 'mode', label: t('resp_label'), type: 'select', required: true, value: v0.mode,
+          options: [{ value: '', label: t('resp_choose') }].concat(L.RESP_MODES.map(function (m) { return { value: m, label: t('resp_' + m) }; })) },
+        { key: 'driver', label: t('driver'), type: 'select', options: workerOptions(p), value: v0.driverId ? String(v0.driverId) : '', showFor: { key: 'mode', values: ['driver'] } },
+        { key: 'newDriver', label: t('resp_new_driver'), type: 'text', value: '', max: 60, showFor: { key: 'mode', values: ['driver'] } },
+        { key: 'openBalance', label: t('open_balance'), type: 'number', value: v0.openBalance ? v0.openBalance : '' },
+        { type: 'note', text: t('open_note') },
         { key: 'insuranceDate', label: t('doc_insurance'), type: 'date', value: v0.insuranceDate },
         { key: 'inspectionDate', label: t('doc_inspection'), type: 'date', value: v0.inspectionDate },
         { key: 'serviceDate', label: t('doc_service'), type: 'date', value: v0.serviceDate },
@@ -1568,7 +1623,15 @@
         { key: 'photos', type: 'photos', state: pst }
       ],
       onSubmit: function (v) {
-        var nt = L.sanitizeTruck({ id: x ? x.id : 0, plate: v.plate, model: v.model, capacity: v.capacity, driverId: Number(v.driver) || 0,
+        var drv = v.mode === 'driver' ? Number(v.driver) || 0 : 0, newName = v.mode === 'driver' ? String(v.newDriver || '').trim() : '';
+        if (v.mode === 'driver' && !drv && !newName) return t('resp_need_driver');
+        if (newName) {
+          var nwk = L.sanitizeWorker({ name: newName, role: t('driver'), rate: '', truck: 0 });
+          if (!nwk) return t('required');
+          p.workers.push(nwk); drv = nwk.id;
+        }
+        var nt = L.sanitizeTruck({ id: x ? x.id : 0, plate: v.plate, model: v.model, capacity: v.capacity, driverId: drv, mode: v.mode, kind: v.kind, ownership: v.ownership,
+          openBalance: Number(v.openBalance) || 0, retired: v.active === 'no' ? !!(x && x.retired) : false, retiredDate: x ? x.retiredDate : '',
           insuranceDate: v.insuranceDate, inspectionDate: v.inspectionDate, serviceDate: v.serviceDate, active: v.active !== 'no', note: v.note, photos: pst.ids });
         if (!nt) return t('required');
         if (isNew) p.trucks.push(nt); else p.trucks[p.trucks.indexOf(x)] = nt;
@@ -1578,9 +1641,20 @@
         });
         L.syncDriverLinks(p.trucks, p.workers);
         save(); renderAll();
+        if (isNew) toast(t('truck_saved'));
         return null;
       },
+      deleteLabel: hasHist ? t('retire_btn') : null,
       onDelete: isNew ? null : function () {
+        if (hasHist) {
+          var bal = L.truckBook(state, p, x.id).closing;
+          if (!window.confirm(t('confirm_retire', { plate: x.plate, bal: money(bal) }))) return false;
+          x.retired = true; x.retiredDate = L.todayStr(); x.active = false; x.driverId = 0;
+          p.workers.forEach(function (w) { if (w.truck === x.id) w.truck = 0; });
+          L.syncDriverLinks(p.trucks, p.workers);
+          save(); renderAll(); toast(t('truck_retired'));
+          return true;
+        }
         if (!window.confirm(t('confirm_delete_truck'))) return false;
         trashPut('truck', x.plate, x, { projectId: p.id }, x.photos);
         p.trucks = p.trucks.filter(function (a) { return a.id !== x.id; });
@@ -2118,7 +2192,7 @@
         // the truck's driver follows what was chosen here
         p.trucks.forEach(function (tk) { if (tk.driverId === w.id && tk.id !== tid) tk.driverId = 0; });
         var ttk = byId(p.trucks, tid);
-        if (ttk) ttk.driverId = w.id;
+        if (ttk) { ttk.driverId = w.id; ttk.mode = 'driver'; }
         L.syncDriverLinks(p.trucks, p.workers);
         save(); renderAll();
         return null;
@@ -3105,7 +3179,7 @@
   $('closeBook').addEventListener('click', function () { closeModal('bookModal'); });
 
   /* About */
-  var APP_VERSION = '1.6.0', APP_BUILD = 8;
+  var APP_VERSION = '1.7.0', APP_BUILD = 9;
   $('aboutBtn').addEventListener('click', function () { $('aboutVersion').textContent = APP_VERSION + ' (build ' + APP_BUILD + ')'; openModal('aboutModal'); });
   $('aboutBackup').addEventListener('click', function () { closeModal('aboutModal'); var b = $('backupBtn'); b.scrollIntoView({ block: 'center' }); b.click(); });
   $('closeAbout').addEventListener('click', function () { closeModal('aboutModal'); });
