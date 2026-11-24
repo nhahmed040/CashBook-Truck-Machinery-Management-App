@@ -563,3 +563,6 @@ body.view-entries.books-home #bookBtn, body.view-entries.books-home .fab { displ
 .respban { border-left: 4px solid #d99a00; }
 .respchip { display: inline-block; margin: 4px 0; padding: 2px 8px; border-radius: 10px; background: #fff3cd; color: #7a5600; font-size: 13px; }
 @media (prefers-color-scheme: dark) { .respchip { background: #4a3a00; color: #ffd966; } }
+.alertrow { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 6px 0; border-top: 1px solid rgba(128,128,128,.25); }
+.alertrow .stext { flex: 1; }
+.alertrow.red .stext { font-weight: 600; }

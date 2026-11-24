@@ -999,6 +999,31 @@
     return [agBlock(t('fin_receivables'), ag.receivables), agBlock(t('fin_payables'), ag.payables)];
   }
 
+  function editRelief(p, tk, r) {
+    var isNew = !r;
+    if (!p.workers.length) { toast(t('drv_none')); return; }
+    openForm({
+      title: t('relief_title') + ' · ' + tk.plate,
+      fields: [
+        { key: 'driver', label: t('driver'), type: 'select', options: workerOptions(p).filter(function (o) { return o.value; }), value: r ? String(r.driver) : String(p.workers[0].id), required: true },
+        { key: 'from', label: t('cash_from'), type: 'date', value: r ? r.from : L.todayStr(), required: true },
+        { key: 'to', label: t('relief_to'), type: 'date', value: r ? r.to : '' },
+        { type: 'note', text: t('relief_note') }
+      ],
+      onSubmit: function (v) {
+        var nr = L.sanitizeRelief({ id: r ? r.id : 0, driver: Number(v.driver), from: v.from, to: v.to });
+        if (!nr) return t('required');
+        if (isNew) tk.relief.push(nr); else tk.relief[tk.relief.indexOf(r)] = nr;
+        save(); renderAll();
+        return null;
+      },
+      onDelete: isNew ? null : function () {
+        tk.relief = tk.relief.filter(function (a) { return a.id !== r.id; });
+        save(); renderAll();
+        return true;
+      }
+    });
+  }
   function openTruckBook(p, truck) {
     var today = L.todayStr(), st = { from: today.slice(0, 8) + '01', to: today };
     var ov = el('div', 'overlay open sheetov'), m = el('div', 'modal importmodal finmodal');
@@ -1588,6 +1613,13 @@
       var row = el('div', 'btnrow');
       row.appendChild(btn(t('add_trip'), 'primary', function () { editTrip(p, null, { truck: x.id }); }));
       row.appendChild(btn(t('trips'), '', function () { openWork(p, { truck: x.id, customer: '', billed: '' }); }));
+      x.relief.slice().sort(function (a, b) { return a.from < b.from ? 1 : -1; }).forEach(function (r) {
+        var rl = el('button', 'remrow'); rl.type = 'button';
+        rl.appendChild(el('span', 'stext', t('relief_line', { name: driverName(p, r.driver), from: fmtDate(r.from), to: r.to ? fmtDate(r.to) : t('relief_open') })));
+        rl.addEventListener('click', function () { editRelief(p, x, r); });
+        card.appendChild(rl);
+      });
+      row.appendChild(btn(t('relief_btn'), '', function () { editRelief(p, x, null); }));
       row.appendChild(btn(t('tb_btn'), '', function () { openTruckBook(p, x); }));
       row.appendChild(btn(t('edit_truck'), '', function () { editTruck(p, x); }));
       card.appendChild(row);
@@ -1739,7 +1771,7 @@
     var v0 = x;
     if (!v0) {
       var tr = preset && preset.truck ? byId(p.trucks, preset.truck) : (byId(p.trucks, last.truck) || p.trucks[0]);
-      v0 = { date: L.todayStr(), truck: tr ? tr.id : 0, driver: tr ? tr.driverId : 0, customer: last.customer || '', from: last.from || '', to: last.to || '', material: last.material || '',
+      v0 = { date: L.todayStr(), truck: tr ? tr.id : 0, driver: tr ? L.responsibleOn(p, tr.id, L.todayStr()) : 0, customer: last.customer || '', from: last.from || '', to: last.to || '', material: last.material || '',
         ticket: '', qty: 1, unit: last.unit || 'trip', rate: last.rate || '', note: '', invoiceId: 0, loads: 0, start: '', end: '', meterStart: 0, meterEnd: 0, fuelByCustomer: false };
     }
     var curType = L.workType(v0), RENT = ['rent_hour', 'rent_day', 'rent_month'], LOAD = ['load_m3', 'load_ton'], ROUTE = ['trip', 'load_m3', 'load_ton'];
@@ -1788,7 +1820,7 @@
         if (wt === 'rent_hour' && !qty && m1 > m0) qty = L.round3(m1 - m0);
         if (wt === 'rent_day' && !qty && start && end && end >= start) qty = L.dayDiff(start, end) + 1;
         if (!(qty > 0)) return t('required');
-        var nt = L.sanitizeTrip({ id: x ? x.id : 0, date: L.isDate(v.date) ? v.date : L.todayStr(), truck: truckId, driver: Number(v.driver) || (tk ? tk.driverId : 0), customer: v.customer,
+        var nt = L.sanitizeTrip({ id: x ? x.id : 0, date: L.isDate(v.date) ? v.date : L.todayStr(), truck: truckId, driver: Number(v.driver) || (tk ? L.responsibleOn(p, tk.id, L.isDate(v.date) ? v.date : L.todayStr()) : 0), customer: v.customer,
           from: rent ? '' : v.from, to: rent ? v.site : v.to, material: rent ? '' : v.material, ticket: v.ticket, qty: qty, unit: u, rate: v['rate_' + key], note: v.note, invoiceId: Number(v.invoice) || 0,
           loads: LOAD.indexOf(wt) >= 0 ? v.loads : 0, start: start, end: end, meterStart: wt === 'rent_hour' ? m0 : 0, meterEnd: wt === 'rent_hour' ? m1 : 0, fuelByCustomer: rent && v.fuelBy === 'yes' });
         if (!nt) return t('required');
@@ -2147,7 +2179,7 @@
         days = Math.round(days * 2) / 2;
         p.attendance = p.attendance.filter(function (a) { return !(a.workerId === w.id && a.date === ui.labourDate); });
         if (days > 0) {
-          var a = L.sanitizeAttendance({ id: L.newId(), date: ui.labourDate, workerId: w.id, days: days, rate: w.rate, truck: w.truck || 0, paid: false });
+          var a = L.sanitizeAttendance({ id: L.newId(), date: ui.labourDate, workerId: w.id, days: days, rate: w.rate, truck: L.truckOn(p, w, ui.labourDate), paid: false });
           if (a) p.attendance.push(a);
         }
         save(); renderProjects();
@@ -2374,6 +2406,7 @@
       card.appendChild(kv(t('wages_owed'), money(ac.owed)));
       if (ac.attendance > 0) card.appendChild(el('div', 'muted small', t('incl_attendance', { n: money(L.round2(ac.attendance)) })));
       card.appendChild(kv(ac.net >= 0 ? t('owner_owes') : t('driver_owes'), money(Math.abs(ac.net)), ac.net > 0 ? 'neg' : ac.net < 0 ? 'pos' : '', 'total'));
+      if (ac.held > 0.004) group(t('count_title'), [btn(t('count_btn'), '', function () { countCash(p, w); })]);
       group(t('drv_in'), [
         btn(t('drv_collect'), ac.collected > 0 ? '' : 'primary', function () { collectFor(p, w); }),
         act('handover', ac.collected > 0 ? 'primary' : '', ac.held > 0 ? ac.held : ''), act('return'), act('repay')]);
@@ -2388,13 +2421,64 @@
         r.type = 'button';
         var tx = el('span', 'stext');
         tx.appendChild(el('b', null, fmtDate(c.date) + ' · ' + cashLabel(c.kind)));
-        tx.appendChild(el('small', 'muted', [c.truck ? L.truckName(p, c.truck) : '', c.code && c.kind === 'spent' ? codeLabel(c.code) : '', c.note].filter(Boolean).join(' · ')));
+        tx.appendChild(el('small', 'muted', [c.truck ? L.truckName(p, c.truck) : '', c.code && c.kind === 'spent' ? codeLabel(c.code) : '', c.kind === 'count' ? t('count_line', { exp: money(c.expected) }) : '', c.note].filter(Boolean).join(' · ')));
         r.appendChild(tx);
         r.appendChild(el('span', 'amt', money(c.amount)));
-        r.addEventListener('click', function () { editCash(p, c, {}); });
+        r.addEventListener('click', function () {
+          if (c.kind !== 'count') { editCash(p, c, {}); return; }
+          if (!window.confirm(t('confirm_delete_cash'))) return;
+          trashPut('cash', fmtDate(c.date) + ' ' + cashLabel(c.kind) + ' ' + money(c.amount), c, { projectId: p.id });
+          p.cash = p.cash.filter(function (a) { return a.id !== c.id; });
+          save(); renderAll(); undoToast();
+        });
         body.appendChild(r);
       });
     });
+  }
+  function countCash(p, w) {
+    var held = L.driverAccount(p, w.id).held;
+    openForm({
+      title: t('count_title') + ' · ' + w.name,
+      fields: [
+        { type: 'note', text: t('count_note', { name: w.name, amt: money(held) }) },
+        { key: 'date', label: t('date'), type: 'date', value: L.todayStr(), required: true },
+        { key: 'counted', label: t('count_counted'), type: 'number', value: held, min: 0 },
+        { key: 'bears', label: t('count_bears'), type: 'select', value: 'owner', options: [{ value: 'owner', label: t('count_bear_owner') }, { value: 'driver', label: t('count_bear_driver') }] }
+      ],
+      onSubmit: function (v) {
+        var counted = L.round2(parseFloat(v.counted));
+        if (!isFinite(counted) || counted < 0) return t('required');
+        var date = L.isDate(v.date) ? v.date : L.todayStr(), now = L.driverAccount(p, w.id).held, diff = L.round2(counted - now), tid = w.truck || 0;
+        function add(o) { var c = L.sanitizeCash(o); if (c) p.cash.push(c); }
+        add({ kind: 'count', date: date, driver: w.id, truck: tid, amount: counted, expected: now });
+        if (diff < -0.004) {
+          add({ kind: 'spent', date: date, driver: w.id, truck: tid, amount: -diff, code: 'other', note: t('count_short_note') });
+          if (v.bears === 'driver') add({ kind: 'deduct', date: date, driver: w.id, truck: tid, amount: -diff, note: t('count_short_note') });
+        }
+        save(); renderAll();
+        toast(Math.abs(diff) < 0.005 ? t('count_match') : diff < 0 ? t('count_short', { n: money(-diff) }) : t('count_over', { n: money(diff) }));
+        return null;
+      }
+    });
+  }
+  function snoozeMap() { try { return JSON.parse(localStorage.getItem('truckbook.snooze') || '{}') || {}; } catch (e) { return {}; } }
+  function snoozeSet(key) { try { var m = snoozeMap(); m[key] = L.addDaysStr(L.todayStr(), 7); localStorage.setItem('truckbook.snooze', JSON.stringify(m)); } catch (e) { /* storage unavailable: the alert simply returns */ } }
+  function alertText(p, a) {
+    return t('al_' + a.type, { name: a.driver ? driverName(p, a.driver) : '', n: money(Math.abs(a.amount || 0)), days: a.days || 0, truck: a.truck ? L.truckName(p, a.truck) : '',
+      pct: a.pct || 0, per100: a.per100 || 0, base: a.base || 0, count: a.count || 0 });
+  }
+  function alertsPanel(p) {
+    var today = L.todayStr(), snz = snoozeMap();
+    var list = L.alerts(state, p, today).filter(function (a) { return !(snz[a.key] && snz[a.key] >= today); });
+    if (!list.length) return null;
+    var pn = panel(t('alerts_title') + ' (' + list.length + ')');
+    list.forEach(function (a) {
+      var row = el('div', 'alertrow ' + a.level);
+      row.appendChild(el('span', 'stext', (a.level === 'red' ? '🔴 ' : '🟠 ') + alertText(p, a)));
+      row.appendChild(btn(t('alert_ok'), '', function () { snoozeSet(a.key); renderDrivers(); }));
+      pn.appendChild(row);
+    });
+    return pn;
   }
   function cashDriversTab(body, p) { driverCards(body, p); }
   function renderDrivers() {
@@ -2419,6 +2503,8 @@
     sm.appendChild(kv(t('drv_total_pending'), money(L.round2(pending))));
     sm.appendChild(kv(t('drv_total_loans'), money(L.round2(loans)), loans > 0 ? 'neg' : ''));
     sm.appendChild(kv(t('drv_total_wages'), money(L.round2(wages))));
+    var ap = alertsPanel(p);
+    if (ap) box.appendChild(ap);
     box.appendChild(sm);
     driverCards(box, p);
   }
@@ -2434,7 +2520,7 @@
       title: isNew ? t('add_cash') : t('edit_cash'),
       fields: [
         { key: 'date', label: t('date'), type: 'date', value: x.date, required: true },
-        { key: 'kind', label: t('cash_type'), type: 'select', options: L.CASH_KINDS.map(function (k) { return { value: k, label: cashLabel(k) }; }), value: x.kind },
+        { key: 'kind', label: t('cash_type'), type: 'select', options: L.CASH_KINDS.filter(function (k) { return k !== 'count'; }).map(function (k) { return { value: k, label: cashLabel(k) }; }), value: x.kind },
         { key: 'driver', label: t('driver'), type: 'select', options: workerOptions(p), value: x.driver ? String(x.driver) : '', showFor: { key: 'kind', values: DRIVER_KINDS } },
         { key: 'truck', label: t('truck'), type: 'select', options: truckOptions(p, true, x.truck), value: x.truck ? String(x.truck) : '' },
         { key: 'amount', label: t('amount'), type: 'number', min: 0.01, value: x.amount, required: true },
@@ -3179,7 +3265,7 @@
   $('closeBook').addEventListener('click', function () { closeModal('bookModal'); });
 
   /* About */
-  var APP_VERSION = '1.7.0', APP_BUILD = 9;
+  var APP_VERSION = '1.8.0', APP_BUILD = 10;
   $('aboutBtn').addEventListener('click', function () { $('aboutVersion').textContent = APP_VERSION + ' (build ' + APP_BUILD + ')'; openModal('aboutModal'); });
   $('aboutBackup').addEventListener('click', function () { closeModal('aboutModal'); var b = $('backupBtn'); b.scrollIntoView({ block: 'center' }); b.click(); });
   $('closeAbout').addEventListener('click', function () { closeModal('aboutModal'); });

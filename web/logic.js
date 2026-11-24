@@ -183,6 +183,26 @@
   /* who is responsible for a truck: its driver, the owner, the hirer's operator, or nobody in particular ('' = not chosen yet) */
   var RESP_MODES = ['driver', 'owner', 'hired', 'pool'];
 
+  /* a relief driver covering a truck for a period (to = '' while open) */
+  function sanitizeRelief(r) {
+    if (!r || typeof r !== 'object' || !validId(r.driver) || !isDate(r.from)) return null;
+    return { id: validId(r.id) ? r.id : newId(), driver: r.driver, from: r.from, to: isDate(r.to) && r.to >= r.from ? r.to : '' };
+  }
+  function reliefCovers(r, date) { return date >= r.from && (!r.to || date <= r.to); }
+  /* who is responsible for a truck on a date: a relief driver covering it, else its usual driver */
+  function responsibleOn(p, truckId, date) {
+    var tk = p.trucks.filter(function (x) { return x.id === truckId; })[0], best = null;
+    if (!tk) return 0;
+    tk.relief.forEach(function (r) { if (reliefCovers(r, date) && (!best || r.from >= best.from)) best = r; });
+    return best ? best.driver : tk.driverId;
+  }
+  /* which truck a worker drives on a date: one he relieves, else his usual truck */
+  function truckOn(p, w, date) {
+    var found = 0, from = '';
+    p.trucks.forEach(function (tk) { tk.relief.forEach(function (r) { if (r.driver === w.id && reliefCovers(r, date) && r.from >= from) { found = tk.id; from = r.from; } }); });
+    return found || w.truck || 0;
+  }
+
   function sanitizeTruck(x) {
     if (!x || typeof x !== 'object') return null;
     var plate = str(x.plate, 30);
@@ -199,6 +219,7 @@
       retired: !!x.retired,
       retiredDate: isDate(x.retiredDate) ? x.retiredDate : '',
       openBalance: num(x.openBalance, -1e12),
+      relief: mapList(x.relief, sanitizeRelief, 20),
       insuranceDate: isDate(x.insuranceDate) ? x.insuranceDate : '',
       inspectionDate: isDate(x.inspectionDate) ? x.inspectionDate : '',
       serviceDate: isDate(x.serviceDate) ? x.serviceDate : '',
@@ -281,7 +302,7 @@
   function syncDriverLinks(trucks, workers) {
     var wById = {};
     workers.forEach(function (w) { wById[w.id] = w; });
-    trucks.forEach(function (tk) { if (tk.driverId && !wById[tk.driverId]) tk.driverId = 0; });
+    trucks.forEach(function (tk) { if (tk.driverId && !wById[tk.driverId]) tk.driverId = 0; tk.relief = tk.relief.filter(function (r) { return wById[r.driver]; }); });
     trucks.forEach(function (tk) {
       if (tk.retired) return;
       if (!tk.mode && tk.driverId) tk.mode = 'driver';
@@ -318,16 +339,17 @@
      allowance = trip allowance / food paid to a driver (a truck cost), loan = personal advance to a driver (not a cost; he owes it back),
      repay = loan paid back in cash, loanded = loan taken off his salary, salary = wage earned (adds to what is owed to the driver), pay = wage paid, deduct = fine or loan taken off,
      in / out = any other cash in or out of a truck. */
-  var CASH_KINDS = ['advance', 'spent', 'return', 'handover', 'allowance', 'loan', 'repay', 'loanded', 'salary', 'pay', 'deduct', 'in', 'out'];
+  var CASH_KINDS = ['count', 'advance', 'spent', 'return', 'handover', 'allowance', 'loan', 'repay', 'loanded', 'salary', 'pay', 'deduct', 'in', 'out'];
   var CASH_MOVES = { advance: 'out', return: 'in', handover: 'in', allowance: 'out', loan: 'out', repay: 'in', pay: 'out', 'in': 'in', out: 'out' }; // kinds that move money in/out of the cash box
   function sanitizeCash(c) {
     if (!c || typeof c !== 'object' || CASH_KINDS.indexOf(c.kind) < 0) return null;
     var a = Number(c.amount);
-    if (!isFinite(a) || a <= 0) return null;
+    if (!isFinite(a) || a < 0 || (a === 0 && c.kind !== 'count')) return null;
     return {
       id: validId(c.id) ? c.id : newId(),
       date: isDate(c.date) ? c.date : todayStr(),
       kind: c.kind,
+      expected: c.kind === 'count' ? round2(num(c.expected, -1e12)) : 0,
       truck: validId(c.truck) ? c.truck : 0,
       driver: validId(c.driver) ? c.driver : 0,
       amount: round2(a),
@@ -1015,6 +1037,63 @@
     lines.sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
     return { opening: round2(open), inn: round2(inn), out: round2(out), closing: round2(open + inn - out), lines: lines };
   }
+  /* ---------- needs-attention alerts (starting defaults; every number is a plain constant to tune after the field test) ---------- */
+  var ALERT = { holdLimit: 10000, settleDays: 3, handoverDays: 1, idleDays: 3, billDays: 14, fuelAmber: 0.15, fuelRed: 0.25, diffRed: 200, countDays: 7, fuelDays: 14 };
+  function median(a) { var s = a.slice().sort(function (x, y) { return x - y; }), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
+  function alerts(state, p, today) {
+    var out = [];
+    function push(type, level, id, o) { o.type = type; o.level = level; o.key = type + ':' + id; out.push(o); }
+    p.workers.forEach(function (w) {
+      var a = driverAccount(p, w.id), settle = '', inflow = [], counts = [];
+      a.entries.forEach(function (c) {
+        if (c.kind === 'handover' || c.kind === 'return' || c.kind === 'count') { if (c.date > settle) settle = c.date; }
+        if (c.kind === 'count') counts.push(c);
+        if (c.kind === 'advance') inflow.push(c.date);
+      });
+      var rc = [];
+      p.invoices.forEach(function (inv) { inv.receipts.forEach(function (r) { if (r.driver === w.id) rc.push(r.date); }); });
+      function since(dates) {
+        var after = dates.filter(function (d) { return d > settle; }).sort();
+        return after.length ? after[0] : (dates.length ? settle || dates.slice().sort()[0] : '');
+      }
+      if (a.held > 0.004) {
+        var s1 = since(inflow.concat(rc)), d1 = s1 ? dayDiff(s1, today) : 0;
+        if (d1 >= ALERT.settleDays) push('unsettled', d1 >= 7 ? 'red' : 'amber', w.id, { driver: w.id, amount: a.held, days: d1 });
+        if (a.held > ALERT.holdLimit) push('holdmuch', 'amber', w.id, { driver: w.id, amount: a.held });
+      }
+      var pend = round2(a.collected - a.handed);
+      if (pend > 0.004 && rc.length) {
+        var hand = '';
+        a.entries.forEach(function (c) { if (c.kind === 'handover' && c.date > hand) hand = c.date; });
+        var after2 = rc.filter(function (d) { return d > hand; }).sort(), s2 = after2.length ? after2[0] : hand, d2 = s2 ? dayDiff(s2, today) : 0;
+        if (d2 >= ALERT.handoverDays) push('handover', 'red', w.id, { driver: w.id, amount: pend, days: d2 });
+      }
+      counts.sort(function (x, y) { return x.date < y.date ? 1 : -1; });
+      var lc = counts[0];
+      if (lc && dayDiff(lc.date, today) <= ALERT.countDays) {
+        var df = round2(lc.amount - lc.expected);
+        if (Math.abs(df) >= 0.01) push('countdiff', (Math.abs(df) >= ALERT.diffRed || (lc.expected > 0 && Math.abs(df) >= lc.expected * 0.01)) ? 'red' : 'amber', w.id, { driver: w.id, amount: df });
+      }
+    });
+    p.trucks.forEach(function (tk) {
+      if (!tk.active || tk.retired) return;
+      var rows = fuelReport(state, p, tk.id).rows.filter(function (r) { return r.per100 > 0; });
+      if (rows.length >= 4) {
+        var last = rows[rows.length - 1], base = median(rows.slice(Math.max(0, rows.length - 11), rows.length - 1).map(function (r) { return r.per100; }));
+        var rise = base > 0 ? last.per100 / base - 1 : 0;
+        if (rise >= ALERT.fuelAmber && dayDiff(last.date, today) <= ALERT.fuelDays) push('fuel', rise >= ALERT.fuelRed ? 'red' : 'amber', tk.id, { truck: tk.id, pct: Math.round(rise * 100), per100: last.per100, base: round2(base) });
+      }
+      var tr = p.trips.filter(function (x) { return x.truck === tk.id; }).map(function (x) { return x.date; }).sort();
+      if (tr.length) {
+        var d3 = dayDiff(tr[tr.length - 1], today);
+        if (d3 >= ALERT.idleDays) push('idle', 'amber', tk.id, { truck: tk.id, days: d3 });
+      }
+    });
+    var old = p.trips.filter(function (x) { return !x.invoiceId && dayDiff(x.date, today) >= ALERT.billDays; });
+    if (old.length) push('notbilled', 'amber', 0, { count: old.length, amount: round2(sum(old, function (x) { return x.amount; })) });
+    out.sort(function (x, y) { return (x.level === 'red' ? 0 : 1) - (y.level === 'red' ? 0 : 1); });
+    return out;
+  }
   function truckCash(state, p, from, to) {
     var rows = {}, order = [];
     function row(id) { return rows[id] || (rows[id] = { truck: id, inn: 0, out: 0, net: 0 }); }
@@ -1570,7 +1649,7 @@
     newId: newId, todayStr: todayStr, isDate: isDate, round2: round2, round3: round3, round6: round6,
     sanitizeEntry: sanitizeEntry, sanitizeState: sanitizeState, defaultState: defaultState, migrateOld: migrateOld,
     sanitizeProject: sanitizeProject, sanitizeBill: sanitizeBill, sanitizeInvoice: sanitizeInvoice, sanitizeTruck: sanitizeTruck, sanitizeTrip: sanitizeTrip,
-    trucksNeedingReview: trucksNeedingReview, truckHasHistory: truckHasHistory, truckBook: truckBook, RESP_MODES: RESP_MODES, syncDriverLinks: syncDriverLinks, workerHasRecords: workerHasRecords, sanitizeWorker: sanitizeWorker, sanitizeAttendance: sanitizeAttendance, sanitizePayment: sanitizePayment,
+    addDaysStr: addDaysStr, alerts: alerts, ALERT: ALERT, responsibleOn: responsibleOn, truckOn: truckOn, sanitizeRelief: sanitizeRelief, trucksNeedingReview: trucksNeedingReview, truckHasHistory: truckHasHistory, truckBook: truckBook, RESP_MODES: RESP_MODES, syncDriverLinks: syncDriverLinks, workerHasRecords: workerHasRecords, sanitizeWorker: sanitizeWorker, sanitizeAttendance: sanitizeAttendance, sanitizePayment: sanitizePayment,
     incomeStatement: incomeStatement, cashFlowStatement: cashFlowStatement, balanceSheet: balanceSheet, agingReport: agingReport, AGE_BUCKETS: AGE_BUCKETS, dayDiff: dayDiff,
     capacityFor: capacityFor, fuelReport: fuelReport,
     sanitizeCash: sanitizeCash, CASH_KINDS: CASH_KINDS, CASH_MOVES: CASH_MOVES, driverAccount: driverAccount, cashLines: cashLines, truckCash: truckCash, cashOnHand: cashOnHand, cashCsv: cashCsv,
