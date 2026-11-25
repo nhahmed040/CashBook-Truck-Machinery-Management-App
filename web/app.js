@@ -885,6 +885,29 @@
   }
 
   /* ---------- rendering: fleets ---------- */
+  /* a short checklist for a new owner; goes away when done, or when hidden */
+  function gettingStarted() {
+    try { if (localStorage.getItem('truckbook.gs.off') === '1') return null; } catch (e) { /* no storage: show it */ }
+    var p = state.projects[0];
+    var steps = [
+      { done: !!p, label: t('gs_fleet'), run: function () { newProject(); } },
+      { done: !!p && p.trucks.length > 0, label: t('gs_truck'), run: function () { if (p) editTruck(p, null); } },
+      { done: !!p && p.workers.length > 0, label: t('gs_driver'), run: function () { if (p) editWorker(p, null); } },
+      { done: !!p && p.trips.length > 0, label: t('gs_work'), run: function () { if (p) { ui.workFleetId = p.id; showView('work'); } } }
+    ];
+    if (steps.every(function (s) { return s.done; })) return null;
+    var pn = panel(t('gs_title')), first = true;
+    steps.forEach(function (s, i) {
+      var needs = i > 0 && !p;
+      if (s.done) { pn.appendChild(el('div', 'gsdone', '✅ ' + s.label)); return; }
+      var b = btn((i + 1) + '. ' + s.label, (first ? 'primary ' : '') + 'block', s.run);
+      if (needs) b.disabled = true;
+      first = false;
+      pn.appendChild(b);
+    });
+    pn.appendChild(btn(t('gs_hide'), 'block', function () { try { localStorage.setItem('truckbook.gs.off', '1'); } catch (e) { /* ignore */ } renderProjects(); }));
+    return pn;
+  }
   function renderProjects() {
     var list = $('projList'), detail = $('projDetail');
     if (ui.projectId && !currentProject()) ui.projectId = '';
@@ -894,7 +917,9 @@
     if (ui.projectId) { renderProjectDetail(detail); return; }
 
     list.textContent = '';
-    if (!state.projects.length) { list.appendChild(el('p', 'empty', t('no_projects'))); return; }
+    var gs = gettingStarted();
+    if (gs) list.appendChild(gs);
+    if (!state.projects.length) { if (!gs) list.appendChild(el('p', 'empty', t('no_projects'))); return; }
     list.appendChild(btn('💰 ' + t('forecast'), 'block', openForecast));
     state.projects.forEach(function (p) {
       var s = L.projectSummary(state, p.id);
@@ -1705,29 +1730,31 @@
     var F = tripFilter();
     if (F.truck && !byId(p.trucks, F.truck)) F.truck = 0;
     var pn = panel(t('trips'));
-    pn.appendChild(btn(t('add_trip'), 'primary block', function () { editTrip(p, null, F.truck ? { truck: F.truck } : null); }));
-    function sel(label, opts, val, on) {
-      var lab = el('label', 'field'), s = document.createElement('select');
-      lab.appendChild(el('span', null, label));
+    if (!p.trips.length) pn.appendChild(btn(t('add_trip'), 'primary block', function () { editTrip(p, null, F.truck ? { truck: F.truck } : null); }));
+    var frow = el('div', 'filterrow');
+    function sel(opts, val, on) {
+      var s = document.createElement('select');
       opts.forEach(function (o) { s.appendChild(option(o.value, o.label)); });
       s.value = val;
       s.addEventListener('change', function () { on(s.value); refreshWork(); });
-      lab.appendChild(s);
-      pn.appendChild(lab);
+      frow.appendChild(s);
     }
-    sel(t('truck'), [{ value: '', label: t('all') }].concat(truckOptions(p, false, F.truck)), F.truck ? String(F.truck) : '', function (v) { F.truck = Number(v) || 0; });
-    sel(t('customer'), [{ value: '', label: t('all') }].concat(L.customerNames(p).map(function (n) { return { value: n, label: n }; })), F.customer || '', function (v) { F.customer = v; });
-    sel(t('invoice_state'), [{ value: '', label: t('all') }, { value: 'no', label: t('not_invoiced') }, { value: 'yes', label: t('invoiced') }], F.billed || '', function (v) { F.billed = v; });
+    if (p.trips.length) {
+      sel([{ value: '', label: t('f_all_trucks') }].concat(truckOptions(p, false, F.truck)), F.truck ? String(F.truck) : '', function (v) { F.truck = Number(v) || 0; });
+      sel([{ value: '', label: t('f_all_customers') }].concat(L.customerNames(p).map(function (n) { return { value: n, label: n }; })), F.customer || '', function (v) { F.customer = v; });
+      sel([{ value: '', label: t('f_all_invoices') }, { value: 'no', label: t('not_invoiced') }, { value: 'yes', label: t('invoiced') }], F.billed || '', function (v) { F.billed = v; });
+      pn.appendChild(frow);
+    }
     var list = L.filterTrips(p, { truck: F.truck, customer: F.customer, billed: F.billed }).reverse();
     var total = L.round2(list.reduce(function (a, x) { return a + x.amount; }, 0));
     pn.appendChild(kv(t('trips') + ' (' + list.length + ')', money(total), '', 'total'));
     var row = el('div', 'btnrow');
     row.appendChild(btn(t('create_invoice'), '', function () { newInvoiceFlow(p, F.customer); }));
-    row.appendChild(btn(t('export_trips'), '', function () {
-      saveWorkbook('Trips-' + safeName(p.name) + '-' + L.todayStr(), window.CBExcel.tripsWorkbook(p, { truck: F.truck, customer: F.customer, billed: F.billed }));
-    }));
-    row.appendChild(btn(t('export_trips_csv'), '', function () {
-      saveFile('truckbook-trips-' + safeName(p.name) + '-' + L.todayStr() + '.csv', 'text/csv', L.tripsCsv(p));
+    row.appendChild(btn(t('more_actions'), '', function () {
+      actionSheet(t('trips'), [
+        { label: t('export_trips'), run: function () { saveWorkbook('Trips-' + safeName(p.name) + '-' + L.todayStr(), window.CBExcel.tripsWorkbook(p, { truck: F.truck, customer: F.customer, billed: F.billed })); } },
+        { label: t('export_trips_csv'), run: function () { saveFile('truckbook-trips-' + safeName(p.name) + '-' + L.todayStr() + '.csv', 'text/csv', L.tripsCsv(p)); } }
+      ]);
     }));
     pn.appendChild(row);
     body.appendChild(pn);
@@ -2288,13 +2315,13 @@
   function cashLabel(k) { return t('ck_' + k); }
   function driverName(p, id) { var w = byId(p.workers, id); return w ? w.name : '—'; }
   function secCash(body, p) {
-    if (!ui.cashTab) ui.cashTab = 'day';
+    if (!ui.cashTab || ui.cashTab === 'drivers') ui.cashTab = 'day';
     if (!ui.cashDate) ui.cashDate = L.todayStr();
     if (!ui.cashFrom) ui.cashFrom = L.todayStr().slice(0, 8) + '01';
     if (!ui.cashTo) ui.cashTo = L.todayStr();
     var tabs = el('div', 'seg');
     tabs.setAttribute('data-ro', '1');
-    [['day', 'cash_day'], ['trucks', 'cash_trucks'], ['drivers', 'cash_drivers']].forEach(function (x) {
+    [['day', 'cash_day'], ['trucks', 'cash_trucks']].forEach(function (x) {
       tabs.appendChild(btn(t(x[1]), ui.cashTab === x[0] ? 'active' : '', function () { ui.cashTab = x[0]; renderProjects(); }));
     });
     body.appendChild(tabs);
@@ -2302,7 +2329,6 @@
     top.appendChild(btn(t('add_cash'), 'primary block', function () { editCash(p, null, {}); }));
     body.appendChild(top);
     if (ui.cashTab === 'trucks') cashTrucksTab(body, p);
-    else if (ui.cashTab === 'drivers') cashDriversTab(body, p);
     else cashDayTab(body, p);
     var ex = panel(null);
     ex.appendChild(btn(t('export_cash_csv'), 'block', function () {
@@ -3287,7 +3313,7 @@
   $('closeBook').addEventListener('click', function () { closeModal('bookModal'); });
 
   /* About */
-  var APP_VERSION = '1.9.0', APP_BUILD = 11;
+  var APP_VERSION = '1.10.0', APP_BUILD = 12;
   $('aboutBtn').addEventListener('click', function () { $('aboutVersion').textContent = APP_VERSION + ' (build ' + APP_BUILD + ')'; openModal('aboutModal'); });
   $('aboutBackup').addEventListener('click', function () { closeModal('aboutModal'); var b = $('backupBtn'); b.scrollIntoView({ block: 'center' }); b.click(); });
   $('closeAbout').addEventListener('click', function () { closeModal('aboutModal'); });

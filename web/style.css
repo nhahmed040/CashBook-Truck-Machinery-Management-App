@@ -566,3 +566,9 @@ body.view-entries.books-home #bookBtn, body.view-entries.books-home .fab { displ
 .alertrow { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 6px 0; border-top: 1px solid rgba(128,128,128,.25); }
 .alertrow .stext { flex: 1; }
 .alertrow.red .stext { font-weight: 600; }
+
+/* header: the book picker only matters on the Entries tab */
+body:not(.view-entries) #bookSelect, body:not(.view-entries) #bookBtn, body:not(.view-entries) #bizSelect { display: none; }
+.filterrow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: 6px 0; }
+.filterrow select { min-width: 0; width: 100%; padding: 8px 6px; font-size: 14px; text-overflow: ellipsis; }
+.gsdone { padding: 8px 4px; opacity: .75; }
