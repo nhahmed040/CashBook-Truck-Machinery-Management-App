@@ -1418,6 +1418,29 @@
       body.appendChild(ap);
     }
 
+    var mFrom0 = today.slice(0, 8) + '01', mt0 = L.truckCash(state, p, mFrom0, today);
+    var mNet0 = L.round2(mt0.reduce(function (x, r) { return x + r.inn - r.out; }, 0));
+    var held0 = 0;
+    p.workers.forEach(function (w) { held0 += L.driverAccount(p, w.id).held; });
+    var qp = panel(t('ov_quick'));
+    qp.appendChild(kv(t('due_from_customers'), money(s.customerOutstanding), s.customerOutstanding > 0 ? 'pos' : ''));
+    qp.appendChild(kv(t('not_invoiced'), money(s.unbilled) + (s.unbilledCount ? ' (' + s.unbilledCount + ')' : ''), s.unbilled > 0 ? 'neg' : ''));
+    qp.appendChild(kv(t('sec_cash') + ' · ' + t('cash_month') + ' · ' + t('cash_net'), money(mNet0), mNet0 < 0 ? 'neg' : 'pos'));
+    qp.appendChild(kv(t('held_by_drivers'), money(L.round2(held0))));
+    qp.appendChild(kv(t('profit'), money(s.profit) + (s.income > 0 ? ' (' + pct(s.margin) + ')' : ''), s.profit < 0 ? 'neg' : 'pos', 'total'));
+    if (s.unbilledCount) qp.appendChild(btn(t('create_invoice'), 'block', function () { newInvoiceFlow(p); }));
+    body.appendChild(qp);
+    var mainBody = body, det = el('div');
+    det.hidden = !ui.ovDetails;
+    var dBtn = btn(ui.ovDetails ? t('ov_hide') : t('ov_show'), 'block', function () {
+      ui.ovDetails = !ui.ovDetails;
+      det.hidden = !ui.ovDetails;
+      dBtn.textContent = ui.ovDetails ? t('ov_hide') : t('ov_show');
+    });
+    mainBody.appendChild(dBtn);
+    mainBody.appendChild(det);
+    body = det;
+
     var c = panel(t('income_section'));
     if (p.owner) c.appendChild(kv(t('owner_name'), p.owner));
     if (p.location) c.appendChild(kv(t('location'), p.location));
@@ -1497,6 +1520,7 @@
     ph.appendChild(holder);
     body.appendChild(ph);
 
+    body = mainBody;
     var row = el('div', 'btnrow');
     row.appendChild(btn(t('print_statement'), '', function () { printStatement(p); }));
     row.appendChild(btn('📑 ' + t('fin_title'), 'primary', function () { openFinancials(p); }));
@@ -1506,7 +1530,7 @@
     }));
     body.appendChild(row);
     if (window.__projectSharePanel) body.appendChild(window.__projectSharePanel(p));
-    body.appendChild(btn(t('delete'), 'danger block', function () {
+    det.appendChild(btn(t('delete'), 'danger block', function () {
       function proceed() {
         state.books.forEach(function (b) { if (b.projectId === p.id) b.projectId = ''; });
         var pph = p.photos.slice();
@@ -2677,6 +2701,7 @@
   var VIEWS = ['entries', 'contacts', 'work', 'drivers', 'projects', 'reports', 'settings'];
   function showView(name) {
     ui.view = name;
+    try { localStorage.setItem('truckbook.lastView', name); } catch (e) { /* ignore */ }
     VIEWS.forEach(function (v) { $('view-' + v).hidden = v !== name; });
     Array.prototype.forEach.call(document.querySelectorAll('.tabs button'), function (b) {
       b.classList.toggle('active', b.getAttribute('data-view') === name);
@@ -3313,7 +3338,7 @@
   $('closeBook').addEventListener('click', function () { closeModal('bookModal'); });
 
   /* About */
-  var APP_VERSION = '1.10.0', APP_BUILD = 12;
+  var APP_VERSION = '1.11.0', APP_BUILD = 13;
   $('aboutBtn').addEventListener('click', function () { $('aboutVersion').textContent = APP_VERSION + ' (build ' + APP_BUILD + ')'; openModal('aboutModal'); });
   $('aboutBackup').addEventListener('click', function () { closeModal('aboutModal'); var b = $('backupBtn'); b.scrollIntoView({ block: 'center' }); b.click(); });
   $('closeAbout').addEventListener('click', function () { closeModal('aboutModal'); });
@@ -4510,7 +4535,10 @@
 
   /* ---------- start ---------- */
   touchBooks();                      // remember how each book looks now, so only later changes count as an update
-  showView('entries');
+  var lastView = 'entries';
+  try { lastView = localStorage.getItem('truckbook.lastView') || 'entries'; } catch (e) { /* ignore */ }
+  if (['entries', 'work', 'drivers', 'projects', 'reports'].indexOf(lastView) < 0) lastView = 'entries';
+  showView(lastView);
   purgeExpiredTrashPhotos();
   renderAll();
   showLock();
